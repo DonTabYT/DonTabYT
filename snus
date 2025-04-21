@@ -1,0 +1,1621 @@
+Исходный скрипт:
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Network = ReplicatedStorage:WaitForChild("Network")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Базовые настройки
+local droneType = "OG-7V"
+local targetPlayerName = "SleepyClerk"
+local spawnedDrone = nil
+local espConnection = nil
+local isGuiOpen = true
+
+-- Функция для создания ESP
+local function CreateESP(object, text, color)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ESP"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 5, 0)
+    billboard.Adornee = object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart")
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.BackgroundTransparency = 1
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.Text = text or "Дрон"
+    textLabel.TextColor3 = color or Color3.fromRGB(255, 0, 0)
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.Parent = billboard
+    
+    -- Создаём обводку вокруг объекта
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = color or Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.Adornee = object
+    highlight.Parent = object
+    
+    billboard.Parent = object
+    
+    return billboard
+end
+
+-- Создаем уведомление
+local function CreateNotification(text, duration)
+    duration = duration or 3
+    
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "Notification"
+    screenGui.ResetOnSpawn = false
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 50)
+    frame.Position = UDim2.new(0.5, -150, 0.8, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+    
+    local cornerRadius = Instance.new("UICorner")
+    cornerRadius.CornerRadius = UDim.new(0, 10)
+    cornerRadius.Parent = frame
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, -20, 1, 0)
+    textLabel.Position = UDim2.new(0, 10, 0, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = text
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextSize = 18
+    textLabel.TextWrapped = true
+    textLabel.Parent = frame
+    
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    
+    -- Анимация появления
+    frame.Position = UDim2.new(0.5, -150, 1.1, 0)
+    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+    game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 0.8, 0)}):Play()
+    
+    -- Автоматическое удаление
+    task.spawn(function()
+        task.wait(duration)
+        tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+        local tween = game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 1.1, 0)})
+        tween.Completed:Connect(function()
+            screenGui:Destroy()
+        end)
+        tween:Play()
+    end)
+    
+    return screenGui
+end
+
+-- Функция для поиска дрона в мире
+local function FindDrone()
+    -- Поиск дрона в папке Workspace.Drones
+    local foundDrone = nil
+    if workspace:FindFirstChild("Drones") then
+        print("✅ Найдена папка Drones в Workspace")
+        
+        -- Получаем недавно созданные дроны (последние в списке)
+        local droneFolder = workspace.Drones
+        local drones = droneFolder:GetChildren()
+        
+        if #drones > 0 then
+            -- Берём последний добавленный дрон
+            foundDrone = drones[#drones]
+            print("✅ Найден дрон:", foundDrone.Name)
+            
+            -- Проверяем, что это действительно дрон нужного типа
+            local isCorrectDroneType = false
+            
+            -- Проверяем по имени или дочерним компонентам
+            if foundDrone:FindFirstChild("EV") then
+                isCorrectDroneType = true
+            end
+            
+            for _, part in ipairs(foundDrone:GetDescendants()) do
+                if part.Name == droneType or part.Name:match("Battery") then
+                    isCorrectDroneType = true
+                    break
+                end
+            end
+            
+            if not isCorrectDroneType then
+                warn("⚠️ Найденный дрон может не соответствовать типу " .. droneType)
+            end
+        else
+            warn("❌ В папке Drones не найдено ни одного дрона")
+        end
+    else
+        warn("❌ Папка Drones не найдена в Workspace")
+    end
+    
+    -- Если дрон не найден в Drones, ищем по всему Workspace
+    if not foundDrone then
+        print("Ищем дрон по всему Workspace...")
+        local recentModels = {}
+        
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj:IsA("Model") and obj ~= workspace.Terrain then
+                -- Проверяем, содержит ли модель часть Battery или EV
+                local hasBattery = false
+                for _, part in ipairs(obj:GetDescendants()) do
+                    if part.Name:match("Battery") or part.Name == "EV" then
+                        hasBattery = true
+                        break
+                    end
+                end
+                
+                if hasBattery then
+                    table.insert(recentModels, obj)
+                end
+            end
+        end
+        
+        if #recentModels > 0 then
+            foundDrone = recentModels[#recentModels]
+            print("✅ Найден вероятный дрон:", foundDrone.Name)
+        end
+    end
+    
+    return foundDrone
+end
+
+-- Функция для создания дрона
+local function CreateDrone()
+    if spawnedDrone and spawnedDrone.Parent then
+        CreateNotification("⚠️ Дрон уже существует! Сначала удалите текущий.", 3)
+        return
+    end
+    
+    print("Создаём дрон типа: " .. droneType)
+    local creationSuccess = Network:WaitForChild("CreateDrone"):InvokeServer(droneType)
+    print("Результат создания дрона:", creationSuccess)
+    
+    -- Пауза для появления дрона в игровом мире
+    task.wait(2)
+    
+    -- Поиск дрона
+    spawnedDrone = FindDrone()
+    
+    if not spawnedDrone then
+        warn("❌ Дрон не был найден в игровом мире")
+        CreateNotification("❌ Дрон не был найден в игровом мире", 3)
+        return false
+    end
+    
+    -- Добавляем ESP на дрон
+    local espTag = CreateESP(spawnedDrone, "ДРОН | " .. droneType, Color3.fromRGB(0, 255, 0))
+    print("✅ ESP добавлен на дрон")
+    
+    -- Убедимся, что у дрона есть PrimaryPart для телепортации
+    local primaryPart = spawnedDrone.PrimaryPart
+    if not primaryPart then
+        -- Если PrimaryPart не установлен, найдём любую часть для установки
+        for _, part in pairs(spawnedDrone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                spawnedDrone.PrimaryPart = part
+                primaryPart = part
+                print("✅ Установлен PrimaryPart для дрона:", part.Name)
+                break
+            end
+        end
+    end
+    
+    if not primaryPart then
+        warn("❌ Не удалось найти часть для установки PrimaryPart на дроне.")
+        CreateNotification("❌ Не удалось найти PrimaryPart для дрона", 3)
+        return false
+    end
+    
+    -- Функция для постоянного обновления положения ESP
+    local function UpdateESP()
+        if espTag and espTag.Parent and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and primaryPart then
+            local distance = (LocalPlayer.Character.HumanoidRootPart.Position - primaryPart.Position).Magnitude
+            espTag.TextLabel.Text = string.format("ДРОН | %s\n%.1f м", droneType, distance)
+        end
+    end
+    
+    -- Обновление ESP каждый кадр
+    if espConnection then
+        espConnection:Disconnect()
+    end
+    espConnection = RunService.RenderStepped:Connect(UpdateESP)
+    
+    -- Очистка при удалении дрона
+    spawnedDrone.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+            if espConnection then
+                espConnection:Disconnect()
+                espConnection = nil
+            end
+            spawnedDrone = nil
+            print("❌ Дрон был удалён")
+            CreateNotification("❌ Дрон был удалён", 3)
+        end
+    end)
+    
+    -- Для отладки сохраняем дрон в глобальную переменную
+    _G.lastSpawnedDrone = spawnedDrone
+    print("Дрон сохранён в _G.lastSpawnedDrone для отладки")
+    
+    CreateNotification("✅ Дрон создан! Используйте интерфейс для управления.", 3)
+    return true
+end
+
+-- Функция для телепортации дрона к игроку
+local function TeleportDroneToPlayer()
+    if not (spawnedDrone and spawnedDrone.Parent) then
+        CreateNotification("❌ Сначала создайте дрон!", 3)
+        return
+    end
+    
+    -- Получаем целевого игрока
+    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if not (targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")) then
+        warn("❌ Не удалось найти игрока или его позицию.")
+        CreateNotification("❌ Игрок не найден: " .. targetPlayerName, 3)
+        return
+    end
+    
+    -- Определяем первичную часть дрона
+    local primaryPart = spawnedDrone.PrimaryPart
+    if not primaryPart then
+        for _, part in pairs(spawnedDrone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                spawnedDrone.PrimaryPart = part
+                primaryPart = part
+                break
+            end
+        end
+    end
+    
+    if not primaryPart then
+        CreateNotification("❌ Не найден PrimaryPart дрона", 3)
+        return
+    end
+    
+    -- Телепортация дрона к игроку
+    local targetPos = targetPlayer.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 0)
+    print("Телепортируем дрон к игроку:", targetPlayerName, "на позицию:", tostring(targetPos))
+    
+    -- Пробуем все возможные методы телепортации
+    print("Метод 1: SetPrimaryPartCFrame")
+    pcall(function()
+        spawnedDrone:SetPrimaryPartCFrame(CFrame.new(targetPos))
+    end)
+    
+    print("Метод 2: Перемещение через свойство CFrame")
+    pcall(function()
+        for _, part in pairs(spawnedDrone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CFrame = CFrame.new(targetPos)
+            end
+        end
+    end)
+    
+    print("Метод 3: Сетевые события")
+    -- Пытаемся найти и использовать событие для управления дроном
+    local possibleEvents = {
+        "MoveDrone", 
+        "TeleportDrone", 
+        "SetDronePosition", 
+        "UpdateDronePosition",
+        "Drive"
+    }
+    
+    for _, eventName in ipairs(possibleEvents) do
+        local event = Network:FindFirstChild(eventName)
+        if event then
+            print("Пробуем событие:", eventName)
+            pcall(function()
+                if event:IsA("RemoteEvent") then
+                    event:FireServer(spawnedDrone, CFrame.new(targetPos))
+                elseif event:IsA("RemoteFunction") then
+                    event:InvokeServer(spawnedDrone, CFrame.new(targetPos))
+                end
+            end)
+        end
+    end
+    
+    CreateNotification("✅ Дрон телепортирован к " .. targetPlayerName, 3)
+    print("✅ Все методы телепортации испробованы")
+end
+
+-- Функция для взрыва дрона
+local function ExplodeDrone()
+    if not (spawnedDrone and spawnedDrone.Parent) then
+        CreateNotification("❌ Сначала создайте дрон!", 3)
+        return
+    end
+    
+    local explodeEvent = Network:FindFirstChild("ExplodeDrone")
+    if explodeEvent then
+        print("💥 Активируем взрыв дрона")
+        
+        -- Создаем визуальный эффект до взрыва
+        local primaryPart = spawnedDrone.PrimaryPart
+        if primaryPart then
+            -- Создаем эффект мигания перед взрывом
+            for i = 1, 3 do
+                if not spawnedDrone or not spawnedDrone.Parent then
+                    break
+                end
+                
+                for _, part in pairs(spawnedDrone:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.Color = Color3.fromRGB(255, 0, 0)
+                    end
+                end
+                task.wait(0.1)
+                
+                if not spawnedDrone or not spawnedDrone.Parent then
+                    break
+                end
+                
+                for _, part in pairs(spawnedDrone:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.Color = Color3.fromRGB(255, 255, 0)
+                    end
+                end
+                task.wait(0.1)
+            end
+        end
+        
+        -- Запускаем взрыв
+        local success, errorMsg = pcall(function()
+            explodeEvent:FireServer(spawnedDrone)
+        end)
+        
+        if success then
+            CreateNotification("💥 Дрон взорван!", 3)
+            if espConnection then
+                espConnection:Disconnect()
+                espConnection = nil
+            end
+            spawnedDrone = nil
+        else
+            warn("❌ Ошибка при взрыве дрона:", errorMsg)
+            CreateNotification("❌ Ошибка при взрыве дрона", 3)
+        end
+    else
+        -- Пробуем альтернативные имена событий
+        local alternativeEvents = {"DetonateDrone", "DestoryDrone", "DestroyDrone"}
+        local eventFound = false
+        
+        for _, eventName in ipairs(alternativeEvents) do
+            local event = Network:FindFirstChild(eventName)
+            if event then
+                eventFound = true
+                local success, errorMsg = pcall(function()
+                    event:FireServer(spawnedDrone)
+                end)
+                
+                if success then
+                    CreateNotification("💥 Дрон взорван!", 3)
+                    if espConnection then
+                        espConnection:Disconnect()
+                        espConnection = nil
+                    end
+                    spawnedDrone = nil
+                    break
+                end
+            end
+        end
+        
+        if not eventFound then
+            warn("❌ Событие взрыва не найдено")
+            CreateNotification("❌ Событие взрыва не найдено", 3)
+        end
+    end
+end
+
+-- Создание GUI
+local function CreateGUI()
+    -- Удаляем старый GUI если он существует
+    if LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI") then
+        LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI"):Destroy()
+    end
+    
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "DroneControlGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    -- Основная панель
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 300, 0, 320)
+    mainFrame.Position = UDim2.new(0.02, 0, 0.3, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = screenGui
+    
+    -- Добавляем скругление углов
+    local cornerRadius = Instance.new("UICorner")
+    cornerRadius.CornerRadius = UDim.new(0, 8)
+    cornerRadius.Parent = mainFrame
+    
+    -- Заголовок
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+    
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.Parent = titleBar
+    
+    local bottomFrame = Instance.new("Frame")
+    bottomFrame.Name = "BottomFrame"
+    bottomFrame.Size = UDim2.new(1, 0, 0, 15)
+    bottomFrame.Position = UDim2.new(0, 0, 0.5, 0)
+    bottomFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    bottomFrame.BorderSizePixel = 0
+    bottomFrame.Parent = titleBar
+    
+    local titleText = Instance.new("TextLabel")
+    titleText.Name = "TitleText"
+    titleText.Size = UDim2.new(1, -60, 1, 0)
+    titleText.Position = UDim2.new(0, 10, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "Управление дроном"
+    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 14
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
+    
+    -- Кнопка закрытия
+    local closeButton = Instance.new("TextButton")
+    closeButton.Name = "CloseButton"
+    closeButton.Size = UDim2.new(0, 24, 0, 24)
+    closeButton.Position = UDim2.new(1, -27, 0, 3)
+    closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+    closeButton.Text = "X"
+    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.TextSize = 14
+    closeButton.Parent = titleBar
+    
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 12)
+    closeCorner.Parent = closeButton
+    
+    -- Кнопка скрытия
+    local hideButton = Instance.new("TextButton")
+    hideButton.Name = "HideButton"
+    hideButton.Size = UDim2.new(0, 24, 0, 24)
+    hideButton.Position = UDim2.new(1, -55, 0, 3)
+    hideButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    hideButton.Text = "-"
+    hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hideButton.Font = Enum.Font.GothamBold
+    hideButton.TextSize = 14
+    hideButton.Parent = titleBar
+    
+    local hideCorner = Instance.new("UICorner")
+    hideCorner.CornerRadius = UDim.new(0, 12)
+    hideCorner.Parent = hideButton
+    
+    -- Контейнер для содержимого
+    local contentFrame = Instance.new("Frame")
+    contentFrame.Name = "ContentFrame"
+    contentFrame.Size = UDim2.new(1, -20, 1, -40)
+    contentFrame.Position = UDim2.new(0, 10, 0, 35)
+    contentFrame.BackgroundTransparency = 1
+    contentFrame.Parent = mainFrame
+    
+    -- Секция выбора типа дрона
+    local droneTypeLabel = Instance.new("TextLabel")
+    droneTypeLabel.Name = "DroneTypeLabel"
+    droneTypeLabel.Size = UDim2.new(1, 0, 0, 20)
+    droneTypeLabel.BackgroundTransparency = 1
+    droneTypeLabel.Text = "Тип дрона:"
+    droneTypeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    droneTypeLabel.Font = Enum.Font.Gotham
+    droneTypeLabel.TextSize = 14
+    droneTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    droneTypeLabel.Parent = contentFrame
+    
+    local droneTypeDropdown = Instance.new("TextButton")
+    droneTypeDropdown.Name = "DroneTypeDropdown"
+    droneTypeDropdown.Size = UDim2.new(1, 0, 0, 30)
+    droneTypeDropdown.Position = UDim2.new(0, 0, 0, 25)
+    droneTypeDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    droneTypeDropdown.Text = droneType
+    droneTypeDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
+    droneTypeDropdown.Font = Enum.Font.Gotham
+    droneTypeDropdown.TextSize = 14
+    droneTypeDropdown.Parent = contentFrame
+    
+    local dropdownCorner = Instance.new("UICorner")
+    dropdownCorner.CornerRadius = UDim.new(0, 5)
+    dropdownCorner.Parent = droneTypeDropdown
+    
+    local dropdownArrow = Instance.new("TextLabel")
+    dropdownArrow.Name = "DropdownArrow"
+    dropdownArrow.Size = UDim2.new(0, 20, 0, 20)
+    dropdownArrow.Position = UDim2.new(1, -25, 0, 5)
+    dropdownArrow.BackgroundTransparency = 1
+    dropdownArrow.Text = "▼"
+    dropdownArrow.TextColor3 = Color3.fromRGB(200, 200, 200)
+    dropdownArrow.Font = Enum.Font.Gotham
+    dropdownArrow.TextSize = 14
+    dropdownArrow.Parent = droneTypeDropdown
+    
+    local droneTypeMenu = Instance.new("Frame")
+    droneTypeMenu.Name = "DroneTypeMenu"
+    droneTypeMenu.Size = UDim2.new(1, 0, 0, 120)
+    droneTypeMenu.Position = UDim2.new(0, 0, 0, 60)
+    droneTypeMenu.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    droneTypeMenu.BorderSizePixel = 0
+    droneTypeMenu.Visible = false
+    droneTypeMenu.ZIndex = 5
+    droneTypeMenu.Parent = contentFrame
+    
+    local menuCorner = Instance.new("UICorner")
+    menuCorner.CornerRadius = UDim.new(0, 5)
+    menuCorner.Parent = droneTypeMenu
+    
+    -- Список доступных типов дронов
+    local droneTypes = {"OG-7V", "PNV-20", "Orlan-10", "RQ-4B", "TB-2"}
+    local buttonHeight = 30
+    
+    for i, dType in ipairs(droneTypes) do
+        local typeButton = Instance.new("TextButton")
+        typeButton.Name = dType .. "Button"
+        typeButton.Size = UDim2.new(1, 0, 0, buttonHeight)
+        typeButton.Position = UDim2.new(0, 0, 0, (i-1) * buttonHeight)
+        typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        typeButton.BackgroundTransparency = 0
+        typeButton.Text = dType
+        typeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        typeButton.Font = Enum.Font.Gotham
+        typeButton.TextSize = 14
+        typeButton.ZIndex = 6
+        typeButton.Parent = droneTypeMenu
+        
+        -- Подсветка при наведении
+        typeButton.MouseEnter:Connect(function()
+            typeButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        end)
+        
+        typeButton.MouseLeave:Connect(function()
+            typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        end)
+        
+        -- Выбор типа дрона
+        typeButton.MouseButton1Click:Connect(function()
+            droneType = dType
+            droneTypeDropdown.Text = dType
+            droneTypeMenu.Visible = false
+        end)
+    end
+    
+    -- Обработчик выпадающего списка
+    droneTypeDropdown.MouseButton1Click:Connect(function()
+        droneTypeMenu.Visible = not droneTypeMenu.Visible
+    end)
+    
+    -- Скрытие меню при клике в другом месте
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local position = input.Position
+            local x = position.X
+            local y = position.Y
+            
+            local menuAbsPos = droneTypeMenu.AbsolutePosition
+            local menuAbsSize = droneTypeMenu.AbsoluteSize
+            local dropdownAbsPos = droneTypeDropdown.AbsolutePosition
+            local dropdownAbsSize = droneTypeDropdown.AbsoluteSize
+            
+            local inDropdown = x >= dropdownAbsPos.X and x <= dropdownAbsPos.X + dropdownAbsSize.X and
+                              y >= dropdownAbsPos.Y and y <= dropdownAbsPos.Y + dropdownAbsSize.Y
+            
+            local inMenu = x >= menuAbsPos.X and x <= menuAbsPos.X + menuAbsSize.X and
+                          y >= menuAbsPos.Y and y <= menuAbsPos.Y + menuAbsSize.Y
+            
+            if droneTypeMenu.Visible and not (inMenu or inDropdown) then
+                droneTypeMenu.Visible = false
+            end
+        end
+    end)
+    
+    -- Секция выбора игрока
+    local playerLabel = Instance.new("TextLabel")
+    playerLabel.Name = "PlayerLabel"
+    playerLabel.Size = UDim2.new(1, 0, 0, 20)
+    playerLabel.Position = UDim2.new(0, 0, 0, 70)
+    playerLabel.BackgroundTransparency = 1
+    playerLabel.Text = "Выбор игрока:"
+    playerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    playerLabel.Font = Enum.Font.Gotham
+    playerLabel.TextSize = 14
+    playerLabel.TextXAlignment = Enum.TextXAlignment.Left
+    playerLabel.Parent = contentFrame
+    
+    local playerDropdown = Instance.new("TextButton")
+   playerDropdown.Name = "PlayerDropdown"
+    playerDropdown.Size = UDim2.new(1, 0, 0, 30)
+    playerDropdown.Position = UDim2.new(0, 0, 0, 95)
+    playerDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    playerDropdown.Text = targetPlayerName
+    playerDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
+    playerDropdown.Font = Enum.Font.Gotham
+    playerDropdown.TextSize = 14
+    playerDropdown.Parent = contentFrame
+    
+    local playerDropdownCorner = Instance.new("UICorner")
+    playerDropdownCorner.CornerRadius = UDim.new(0, 5)
+    playerDropdownCorner.Parent = playerDropdown
+    
+    local playerDropdownArrow = Instance.new("TextLabel")
+    playerDropdownArrow.Name = "DropdownArrow"
+    playerDropdownArrow.Size = UDim2.new(0, 20, 0, 20)
+    playerDropdownArrow.Position = UDim2.new(1, -25, 0, 5)
+    playerDropdownArrow.BackgroundTransparency = 1
+    playerDropdownArrow.Text = "▼"
+    playerDropdownArrow.TextColor3 = Color3.fromRGB(200, 200, 200)
+    playerDropdownArrow.Font = Enum.Font.Gotham
+    playerDropdownArrow.TextSize = 14
+    playerDropdownArrow.Parent = playerDropdown
+    
+    local playerMenu = Instance.new("ScrollingFrame")
+    playerMenu.Name = "PlayerMenu"
+    playerMenu.Size = UDim2.new(1, 0, 0, 120)
+    playerMenu.Position = UDim2.new(0, 0, 0, 130)
+    playerMenu.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    playerMenu.BorderSizePixel = 0
+    playerMenu.ScrollBarThickness = 6
+    playerMenu.Visible = false
+    playerMenu.ZIndex = 5
+    playerMenu.ScrollingDirection = Enum.ScrollingDirection.Y
+    playerMenu.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
+    playerMenu.CanvasSize = UDim2.new(0, 0, 0, 0) -- Будет обновлено динамически
+    playerMenu.Parent = contentFrame
+    
+    local playerMenuCorner = Instance.new("UICorner")
+    playerMenuCorner.CornerRadius = UDim.new(0, 5)
+    playerMenuCorner.Parent = playerMenu
+    
+    -- Функция для обновления списка игроков
+    local function UpdatePlayerList()
+        -- Очищаем текущий список
+        for _, child in pairs(playerMenu:GetChildren()) do
+            if child:IsA("TextButton") then
+                child:Destroy()
+            end
+        end
+        
+        -- Получаем список всех игроков
+        local playerList = Players:GetPlayers()
+        local buttonHeight = 30
+        
+        -- Обновляем размер канваса
+        playerMenu.CanvasSize = UDim2.new(0, 0, 0, #playerList * buttonHeight)
+        
+        -- Создаем кнопки для каждого игрока
+        for i, player in ipairs(playerList) do
+            local playerButton = Instance.new("TextButton")
+            playerButton.Name = player.Name .. "Button"
+            playerButton.Size = UDim2.new(1, -10, 0, buttonHeight)
+            playerButton.Position = UDim2.new(0, 5, 0, (i-1) * buttonHeight)
+            playerButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+            playerButton.BackgroundTransparency = 0
+            playerButton.Text = player.Name
+            playerButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+            playerButton.Font = Enum.Font.Gotham
+            playerButton.TextSize = 14
+            playerButton.ZIndex = 6
+            playerButton.Parent = playerMenu
+            
+            -- Подсветка при наведении
+            playerButton.MouseEnter:Connect(function()
+                playerButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+            end)
+            
+            playerButton.MouseLeave:Connect(function()
+                playerButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+            end)
+            
+            -- Выбор игрока
+            playerButton.MouseButton1Click:Connect(function()
+                targetPlayerName = player.Name
+                playerDropdown.Text = player.Name
+                playerMenu.Visible = false
+            end)
+            
+            -- Добавляем скругление углов к кнопке игрока
+            local playerButtonCorner = Instance.new("UICorner")
+            playerButtonCorner.CornerRadius = UDim.new(0, 5)
+            playerButtonCorner.Parent = playerButton
+        end
+    end
+    
+    -- Обработчик выпадающего списка игроков
+    playerDropdown.MouseButton1Click:Connect(function()
+        if not playerMenu.Visible then
+            UpdatePlayerList() -- Обновляем список при открытии
+        end
+        playerMenu.Visible = not playerMenu.Visible
+    end)
+    
+    -- Скрытие меню игроков при клике в другом месте
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and playerMenu.Visible then
+            local position = input.Position
+            local x = position.X
+            local y = position.Y
+            
+            local menuAbsPos = playerMenu.AbsolutePosition
+            local menuAbsSize = playerMenu.AbsoluteSize
+            local dropdownAbsPos = playerDropdown.AbsolutePosition
+            local dropdownAbsSize = playerDropdown.AbsoluteSize
+            
+            local inDropdown = x >= dropdownAbsPos.X and x <= dropdownAbsPos.X + dropdownAbsSize.X and
+                              y >= dropdownAbsPos.Y and y <= dropdownAbsPos.Y + dropdownAbsSize.Y
+            
+            local inMenu = x >= menuAbsPos.X and x <= menuAbsPos.X + menuAbsSize.X and
+                          y >= menuAbsPos.Y and y <= menuAbsPos.Y + menuAbsSize.Y
+            
+            if not (inMenu or inDropdown) then
+                playerMenu.Visible = false
+            end
+        end
+    end)
+    
+    -- Секция информации о текущем дроне
+    local droneInfoLabel = Instance.new("TextLabel")
+    droneInfoLabel.Name = "DroneInfoLabel"
+    droneInfoLabel.Size = UDim2.new(1, 0, 0, 20)
+    droneInfoLabel.Position = UDim2.new(0, 0, 0, 140)
+    droneInfoLabel.BackgroundTransparency = 1
+    droneInfoLabel.Text = "Статус дрона:"
+    droneInfoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    droneInfoLabel.Font = Enum.Font.Gotham
+    droneInfoLabel.TextSize = 14
+    droneInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    droneInfoLabel.Parent = contentFrame
+    
+    local droneStatusFrame = Instance.new("Frame")
+    droneStatusFrame.Name = "DroneStatusFrame"
+    droneStatusFrame.Size = UDim2.new(1, 0, 0, 30)
+    droneStatusFrame.Position = UDim2.new(0, 0, 0, 165)
+    droneStatusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    droneStatusFrame.Parent = contentFrame
+    
+    local statusCorner = Instance.new("UICorner")
+    statusCorner.CornerRadius = UDim.new(0, 5)
+    statusCorner.Parent = droneStatusFrame
+    
+    local droneStatusText = Instance.new("TextLabel")
+    droneStatusText.Name = "DroneStatusText"
+    droneStatusText.Size = UDim2.new(1, -10, 1, 0)
+    droneStatusText.Position = UDim2.new(0, 5, 0, 0)
+    droneStatusText.BackgroundTransparency = 1
+    droneStatusText.Text = "Не создан"
+    droneStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    droneStatusText.Font = Enum.Font.Gotham
+    droneStatusText.TextSize = 14
+    droneStatusText.TextXAlignment = Enum.TextXAlignment.Left
+    droneStatusText.Parent = droneStatusFrame
+    
+    -- Секция кнопок управления
+    local buttonSpacing = 5
+    local buttonWidth = (contentFrame.Size.X.Offset - buttonSpacing) / 2
+    
+    -- Кнопка создания дрона
+    local createButton = Instance.new("TextButton")
+    createButton.Name = "CreateButton"
+    createButton.Size = UDim2.new(1, 0, 0, 35)
+    createButton.Position = UDim2.new(0, 0, 0, 210)
+    createButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+    createButton.Text = "Создать дрон"
+    createButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    createButton.Font = Enum.Font.GothamBold
+    createButton.TextSize = 14
+    createButton.Parent = contentFrame
+    
+    local createButtonCorner = Instance.new("UICorner")
+    createButtonCorner.CornerRadius = UDim.new(0, 5)
+    createButtonCorner.Parent = createButton
+    
+    -- Кнопка телепортации
+    local teleportButton = Instance.new("TextButton")
+    teleportButton.Name = "TeleportButton"
+    teleportButton.Size = UDim2.new(0.5, -buttonSpacing / 2, 0, 35)
+    teleportButton.Position = UDim2.new(0, 0, 0, 250)
+    teleportButton.BackgroundColor3 = Color3.fromRGB(60, 120, 60)
+    teleportButton.Text = "Телепорт"
+    teleportButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    teleportButton.Font = Enum.Font.GothamBold
+    teleportButton.TextSize = 14
+    teleportButton.Parent = contentFrame
+    
+    local teleportButtonCorner = Instance.new("UICorner")
+    teleportButtonCorner.CornerRadius = UDim.new(0, 5)
+    teleportButtonCorner.Parent = teleportButton
+    
+    -- Кнопка взрыва
+    local explodeButton = Instance.new("TextButton")
+    explodeButton.Name = "ExplodeButton"
+    explodeButton.Size = UDim2.new(0.5, -buttonSpacing / 2, 0, 35)
+    explodeButton.Position = UDim2.new(0.5, buttonSpacing / 2, 0, 250)
+    explodeButton.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
+    explodeButton.Text = "Взорвать"
+    explodeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    explodeButton.Font = Enum.Font.GothamBold
+    explodeButton.TextSize = 14
+    explodeButton.Parent = contentFrame
+    
+    local explodeButtonCorner = Instance.new("UICorner")
+    explodeButtonCorner.CornerRadius = UDim.new(0, 5)
+    explodeButtonCorner.Parent = explodeButton
+    
+    -- Обработчики кнопок
+    createButton.MouseButton1Click:Connect(function()
+        if CreateDrone() then
+            droneStatusText.Text = "Активен: " .. droneType
+            droneStatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
+        end
+    end)
+    
+    teleportButton.MouseButton1Click:Connect(function()
+        TeleportDroneToPlayer()
+    end)
+    
+    explodeButton.MouseButton1Click:Connect(function()
+        ExplodeDrone()
+        droneStatusText.Text = "Не создан"
+        droneStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    end)
+    
+    -- Эффекты при наведении на кнопки
+    local function ButtonHoverEffect(button, defaultColor, hoverColor)
+        button.MouseEnter:Connect(function()
+            button.BackgroundColor3 = hoverColor
+        end)
+        
+        button.MouseLeave:Connect(function()
+            button.BackgroundColor3 = defaultColor
+        end)
+    end
+    
+    ButtonHoverEffect(createButton, Color3.fromRGB(0, 120, 215), Color3.fromRGB(0, 140, 235))
+    ButtonHoverEffect(teleportButton, Color3.fromRGB(60, 120, 60), Color3.fromRGB(70, 140, 70))
+    ButtonHoverEffect(explodeButton, Color3.fromRGB(180, 60, 60), Color3.fromRGB(200, 70, 70))
+    
+    -- Обработчики кнопок управления GUI
+    closeButton.MouseButton1Click:Connect(function()
+        screenGui:Destroy()
+    end)
+    
+    local originalSize = mainFrame.Size
+    local minimizedSize = UDim2.new(0, 300, 0, 30)
+    
+    hideButton.MouseButton1Click:Connect(function()
+        isGuiOpen = not isGuiOpen
+        
+        if isGuiOpen then
+            hideButton.Text = "-"
+            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = originalSize}):Play()
+            task.wait(0.3)
+            contentFrame.Visible = true
+        else
+            hideButton.Text = "+"
+            contentFrame.Visible = false
+            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = minimizedSize}):Play()
+        end
+    end)
+    
+    -- Проверка обновления статуса дрона
+    local function UpdateDroneStatus()
+        if RunService:IsStudio() then
+            return -- Не выполняем в Studio, чтобы избежать ошибок
+        end
+        
+        if spawnedDrone and spawnedDrone.Parent then
+            droneStatusText.Text = "Активен: " .. droneType
+            droneStatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
+        else
+            droneStatusText.Text = "Не создан"
+            droneStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
+    
+    local statusUpdateConnection = RunService.Heartbeat:Connect(UpdateDroneStatus)
+    
+    -- Очистка при удалении GUI
+    screenGui.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+            if statusUpdateConnection then
+                statusUpdateConnection:Disconnect()
+            end
+            if espConnection then
+                espConnection:Disconnect()
+            end
+        end
+    end)
+    
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    return screenGui
+end
+
+-- Запуск скрипта при активации
+local gui = CreateGUI()
+CreateNotification("✅ Панель управления дроном активирована", 3)
+
+-- Добавляем обработчик клавиши для вызова/скрытия GUI
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.F4 then
+        if LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI") then
+            LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI"):Destroy()
+        else
+            CreateGUI()
+            CreateNotification("✅ Панель управления дроном активирована", 3)
+        end
+    end
+    
+    -- Сохраняем функцию взрыва на клавишу V для обратной совместимости
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.V then
+        ExplodeDrone()
+    end
+end)
+
+Цель промта:
+У меня есть такой скрипт для роблокс 1. Исправь меню (объекты друг на друге) 2. Убери в меню определитель дрона 3. Скрипт почемуто определяет не правильно дрон есп и какой дрон телепортировать. У меня есп отображается на чужой дрон который уже давно летает и пытается его телепортировать, а мне нужно телепортировать дрон который заспавнил именно я. 4. Сделай автообновления списка игроков каждые 3 сек 5. Не скидывай части кода которые изменять не надо
+
+Недописанный скрипт с изменениями:
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Network = ReplicatedStorage:WaitForChild("Network")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Базовые настройки
+local droneType = "OG-7V"
+local targetPlayerName = "SleepyClerk"
+local spawnedDrone = nil
+local espConnection = nil
+local isGuiOpen = true
+
+-- Функция для создания ESP
+local function CreateESP(object, text, color)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ESP"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 5, 0)
+    billboard.Adornee = object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart")
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.BackgroundTransparency = 1
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.Text = text or "Дрон"
+    textLabel.TextColor3 = color or Color3.fromRGB(255, 0, 0)
+    textLabel.TextScaled = true
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.Parent = billboard
+    
+    -- Создаём обводку вокруг объекта
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = color or Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.Adornee = object
+    highlight.Parent = object
+    
+    billboard.Parent = object
+    
+    return billboard
+end
+
+-- Создаем уведомление
+local function CreateNotification(text, duration)
+    duration = duration or 3
+    
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "Notification"
+    screenGui.ResetOnSpawn = false
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 50)
+    frame.Position = UDim2.new(0.5, -150, 0.8, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+    
+    local cornerRadius = Instance.new("UICorner")
+    cornerRadius.CornerRadius = UDim.new(0, 10)
+    cornerRadius.Parent = frame
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, -20, 1, 0)
+    textLabel.Position = UDim2.new(0, 10, 0, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = text
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextSize = 18
+    textLabel.TextWrapped = true
+    textLabel.Parent = frame
+    
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    
+    -- Анимация появления
+    frame.Position = UDim2.new(0.5, -150, 1.1, 0)
+    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+    game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 0.8, 0)}):Play()
+    
+    -- Автоматическое удаление
+    task.spawn(function()
+        task.wait(duration)
+        tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+        local tween = game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 1.1, 0)})
+        tween.Completed:Connect(function()
+            screenGui:Destroy()
+        end)
+        tween:Play()
+    end)
+    
+    return screenGui
+end
+
+-- Функция для создания дрона
+local function CreateDrone()
+    if spawnedDrone and spawnedDrone.Parent then
+        CreateNotification("⚠️ Дрон уже существует! Сначала удалите текущий.", 3)
+        return
+    end
+    
+    print("Создаём дрон типа: " .. droneType)
+    local creationSuccess = Network:WaitForChild("CreateDrone"):InvokeServer(droneType)
+    print("Результат создания дрона:", creationSuccess)
+    
+    -- Пауза для появления дрона в игровом мире
+    task.wait(2)
+    
+    -- Сохраняем ссылку на созданный дрон
+    local droneFolder = workspace:FindFirstChild("Drones")
+    if droneFolder then
+        local drones = droneFolder:GetChildren()
+        if #drones > 0 then
+            -- Важное исправление: берем последний созданный дрон и проверяем его владельца
+            for i = #drones, 1, -1 do
+                local potentialDrone = drones[i]
+                -- Проверяем, принадлежит ли этот дрон локальному игроку
+                local isDroneOwnedByLocalPlayer = false
+                
+                -- Проверка на tag или другой атрибут владельца
+                if potentialDrone:FindFirstChild("Owner") and potentialDrone.Owner.Value == LocalPlayer then
+                    isDroneOwnedByLocalPlayer = true
+                end
+                
+                -- Если владельца нет, проверяем, создан ли этот дрон недавно
+                if not isDroneOwnedByLocalPlayer then
+                    -- Проверяем время создания (если доступно)
+                    if potentialDrone:GetAttribute("CreationTime") then
+                        local creationTime = potentialDrone:GetAttribute("CreationTime")
+                        if tick() - creationTime < 10 then -- Если создан менее 10 секунд назад
+                            isDroneOwnedByLocalPlayer = true
+                        end
+                    else
+                        -- Если нет атрибута времени создания, предполагаем, что последний созданный - наш
+                        if i == #drones then
+                            isDroneOwnedByLocalPlayer = true
+                        end
+                    end
+                end
+                
+                if isDroneOwnedByLocalPlayer then
+                    spawnedDrone = potentialDrone
+                    break
+                end
+            end
+        end
+    end
+    
+    if not spawnedDrone then
+        warn("❌ Дрон не был найден в игровом мире")
+        CreateNotification("❌ Дрон не был найден в игровом мире", 3)
+        return false
+    end
+    
+    -- Маркируем наш дрон для последующей идентификации
+    spawnedDrone:SetAttribute("OwnedByLocalScript", true)
+    spawnedDrone:SetAttribute("CreationTime", tick())
+    
+    -- Добавляем ESP на дрон
+    local espTag = CreateESP(spawnedDrone, "ДРОН | " .. droneType, Color3.fromRGB(0, 255, 0))
+    print("✅ ESP добавлен на дрон")
+    
+    -- Убедимся, что у дрона есть PrimaryPart для телепортации
+    local primaryPart = spawnedDrone.PrimaryPart
+    if not primaryPart then
+        -- Если PrimaryPart не установлен, найдём любую часть для установки
+        for _, part in pairs(spawnedDrone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                spawnedDrone.PrimaryPart = part
+                primaryPart = part
+                print("✅ Установлен PrimaryPart для дрона:", part.Name)
+                break
+            end
+        end
+    end
+    
+    if not primaryPart then
+        warn("❌ Не удалось найти часть для установки PrimaryPart на дроне.")
+        CreateNotification("❌ Не удалось найти PrimaryPart для дрона", 3)
+        return false
+    end
+    
+    -- Функция для постоянного обновления положения ESP
+    local function UpdateESP()
+        if espTag and espTag.Parent and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and primaryPart then
+            local distance = (LocalPlayer.Character.HumanoidRootPart.Position - primaryPart.Position).Magnitude
+            espTag.TextLabel.Text = string.format("ДРОН | %s\n%.1f м", droneType, distance)
+        end
+    end
+    
+    -- Обновление ESP каждый кадр
+    if espConnection then
+        espConnection:Disconnect()
+    end
+    espConnection = RunService.RenderStepped:Connect(UpdateESP)
+    
+    -- Очистка при удалении дрона
+    spawnedDrone.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+            if espConnection then
+                espConnection:Disconnect()
+                espConnection = nil
+            end
+            spawnedDrone = nil
+            print("❌ Дрон был удалён")
+            CreateNotification("❌ Дрон был удалён", 3)
+        end
+    end)
+    
+    -- Для отладки сохраняем дрон в глобальную переменную
+    _G.lastSpawnedDrone = spawnedDrone
+    print("Дрон сохранён в _G.lastSpawnedDrone для отладки")
+    
+    CreateNotification("✅ Дрон создан! Используйте интерфейс для управления.", 3)
+    return true
+end
+
+-- Функция для телепортации дрона к игроку
+local function TeleportDroneToPlayer()
+    if not (spawnedDrone and spawnedDrone.Parent) then
+        CreateNotification("❌ Сначала создайте дрон!", 3)
+        return
+    end
+    
+    -- Получаем целевого игрока
+    local targetPlayer = Players:FindFirstChild(targetPlayerName)
+    if not (targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")) then
+        warn("❌ Не удалось найти игрока или его позицию.")
+        CreateNotification("❌ Игрок не найден: " .. targetPlayerName, 3)
+        return
+    end
+    
+    -- Проверяем, что мы телепортируем именно наш дрон
+    if not spawnedDrone:GetAttribute("OwnedByLocalScript") then
+        CreateNotification("❌ Этот дрон не принадлежит вам", 3)
+        return
+    }
+    
+    -- Определяем первичную часть дрона
+    local primaryPart = spawnedDrone.PrimaryPart
+    if not primaryPart then
+        for _, part in pairs(spawnedDrone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                spawnedDrone.PrimaryPart = part
+                primaryPart = part
+                break
+            end
+        end
+    end
+    
+    if not primaryPart then
+        CreateNotification("❌ Не найден PrimaryPart дрона", 3)
+        return
+    end
+    
+    -- Телепортация дрона к игроку
+    local targetPos = targetPlayer.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 0)
+    print("Телепортируем дрон к игроку:", targetPlayerName, "на позицию:", tostring(targetPos))
+    
+    -- Пробуем все возможные методы телепортации
+    print("Метод 1: SetPrimaryPartCFrame")
+    pcall(function()
+        spawnedDrone:SetPrimaryPartCFrame(CFrame.new(targetPos))
+    end)
+    
+    print("Метод 2: Перемещение через свойство CFrame")
+    pcall(function()
+        for _, part in pairs(spawnedDrone:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CFrame = CFrame.new(targetPos)
+            end
+        end
+    end)
+    
+    print("Метод 3: Сетевые события")
+    -- Пытаемся найти и использовать событие для управления дроном
+    local possibleEvents = {
+        "MoveDrone", 
+        "TeleportDrone", 
+        "SetDronePosition", 
+        "UpdateDronePosition",
+        "Drive"
+    }
+    
+    for _, eventName in ipairs(possibleEvents) do
+        local event = Network:FindFirstChild(eventName)
+        if event then
+            print("Пробуем событие:", eventName)
+            pcall(function()
+                if event:IsA("RemoteEvent") then
+                    event:FireServer(spawnedDrone, CFrame.new(targetPos))
+                elseif event:IsA("RemoteFunction") then
+                    event:InvokeServer(spawnedDrone, CFrame.new(targetPos))
+                end
+            end)
+        end
+    end
+    
+    CreateNotification("✅ Дрон телепортирован к " .. targetPlayerName, 3)
+    print("✅ Все методы телепортации испробованы")
+end
+
+-- Функция для взрыва дрона
+local function ExplodeDrone()
+    if not (spawnedDrone and spawnedDrone.Parent) then
+        CreateNotification("❌ Сначала создайте дрон!", 3)
+        return
+    end
+    
+    -- Проверяем, что мы взрываем именно наш дрон
+    if not spawnedDrone:GetAttribute("OwnedByLocalScript") then
+        CreateNotification("❌ Этот дрон не принадлежит вам", 3)
+        return
+    }
+    
+    local explodeEvent = Network:FindFirstChild("ExplodeDrone")
+    if explodeEvent then
+        print("💥 Активируем взрыв дрона")
+        
+        -- Создаем визуальный эффект до взрыва
+        local primaryPart = spawnedDrone.PrimaryPart
+        if primaryPart then
+            -- Создаем эффект мигания перед взрывом
+            for i = 1, 3 do
+                if not spawnedDrone or not spawnedDrone.Parent then
+                    break
+                end
+                
+                for _, part in pairs(spawnedDrone:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.Color = Color3.fromRGB(255, 0, 0)
+                    end
+                end
+                task.wait(0.1)
+                
+                if not spawnedDrone or not spawnedDrone.Parent then
+                    break
+                end
+                
+                for _, part in pairs(spawnedDrone:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.Color = Color3.fromRGB(255, 255, 0)
+                    end
+                end
+                task.wait(0.1)
+            end
+        end
+        
+        -- Запускаем взрыв
+        local success, errorMsg = pcall(function()
+            explodeEvent:FireServer(spawnedDrone)
+        end)
+        
+        if success then
+            CreateNotification("💥 Дрон взорван!", 3)
+            if espConnection then
+                espConnection:Disconnect()
+                espConnection = nil
+            end
+            spawnedDrone = nil
+        else
+            warn("❌ Ошибка при взрыве дрона:", errorMsg)
+            CreateNotification("❌ Ошибка при взрыве дрона", 3)
+        end
+    else
+        -- Пробуем альтернативные имена событий
+        local alternativeEvents = {"DetonateDrone", "DestoryDrone", "DestroyDrone"}
+        local eventFound = false
+        
+        for _, eventName in ipairs(alternativeEvents) do
+            local event = Network:FindFirstChild(eventName)
+            if event then
+                eventFound = true
+                local success, errorMsg = pcall(function()
+                    event:FireServer(spawnedDrone)
+                end)
+                
+                if success then
+                    CreateNotification("💥 Дрон взорван!", 3)
+                    if espConnection then
+                        espConnection:Disconnect()
+                        espConnection = nil
+                    end
+                    spawnedDrone = nil
+                    break
+                end
+            end
+        end
+        
+        if not eventFound then
+            warn("❌ Событие взрыва не найдено")
+            CreateNotification("❌ Событие взрыва не найдено", 3)
+        end
+    end
+end
+
+-- Создание GUI
+local function CreateGUI()
+    -- Удаляем старый GUI если он существует
+    if LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI") then
+        LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI"):Destroy()
+    end
+    
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "DroneControlGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    -- Основная панель
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 300, 0, 320)
+    mainFrame.Position = UDim2.new(0.02, 0, 0.3, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = screenGui
+    
+    -- Добавляем скругление углов
+    local cornerRadius = Instance.new("UICorner")
+    cornerRadius.CornerRadius = UDim.new(0, 8)
+    cornerRadius.Parent = mainFrame
+    
+    -- Заголовок
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+    
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.Parent = titleBar
+    
+    local bottomFrame = Instance.new("Frame")
+    bottomFrame.Name = "BottomFrame"
+    bottomFrame.Size = UDim2.new(1, 0, 0, 15)
+    bottomFrame.Position = UDim2.new(0, 0, 0.5, 0)
+    bottomFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    bottomFrame.BorderSizePixel = 0
+    bottomFrame.Parent = titleBar
+    
+    local titleText = Instance.new("TextLabel")
+    titleText.Name = "TitleText"
+    titleText.Size = UDim2.new(1, -60, 1, 0)
+    titleText.Position = UDim2.new(0, 10, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "Управление дроном"
+    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 14
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
+    
+    -- Кнопка закрытия
+    local closeButton = Instance.new("TextButton")
+    closeButton.Name = "CloseButton"
+    closeButton.Size = UDim2.new(0, 24, 0, 24)
+    closeButton.Position = UDim2.new(1, -27, 0, 3)
+    closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+    closeButton.Text = "X"
+    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.TextSize = 14
+    closeButton.Parent = titleBar
+    
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 12)
+    closeCorner.Parent = closeButton
+    
+    -- Кнопка скрытия
+    local hideButton = Instance.new("TextButton")
+    hideButton.Name = "HideButton"
+    hideButton.Size = UDim2.new(0, 24, 0, 24)
+    hideButton.Position = UDim2.new(1, -55, 0, 3)
+    hideButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    hideButton.Text = "-"
+    hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hideButton.Font = Enum.Font.GothamBold
+    hideButton.TextSize = 14
+    hideButton.Parent = titleBar
+    
+    local hideCorner = Instance.new("UICorner")
+    hideCorner.CornerRadius = UDim.new(0, 12)
+    hideCorner.Parent = hideButton
+    
+    -- Контейнер для содержимого
+    local contentFrame = Instance.new("Frame")
+    contentFrame.Name = "ContentFrame"
+    contentFrame.Size = UDim2.new(1, -20, 1, -40)
+    contentFrame.Position = UDim2.new(0, 10, 0, 35)
+    contentFrame.BackgroundTransparency = 1
+    contentFrame.Parent = mainFrame
+    
+    -- Секция выбора типа дрона (поз. исправлена)
+    local droneTypeLabel = Instance.new("TextLabel")
+    droneTypeLabel.Name = "DroneTypeLabel"
+    droneTypeLabel.Size = UDim2.new(1, 0, 0, 20)
+    droneTypeLabel.Position = UDim2.new(0, 0, 0, 0)
+    droneTypeLabel.BackgroundTransparency = 1
+    droneTypeLabel.Text = "Тип дрона:"
+    droneTypeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    droneTypeLabel.Font = Enum.Font.Gotham
+    droneTypeLabel.TextSize = 14
+    droneTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    droneTypeLabel.Parent = contentFrame
+    
+    local droneTypeDropdown = Instance.new("TextButton")
+    droneTypeDropdown.Name = "DroneTypeDropdown"
+    droneTypeDropdown.Size = UDim2.new(1, 0, 0, 30)
+    droneTypeDropdown.Position = UDim2.new(0, 0, 0, 25)
+    droneTypeDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    droneTypeDropdown.Text = droneType
+    droneTypeDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
+    droneTypeDropdown.Font = Enum.Font.Gotham
+    droneTypeDropdown.TextSize = 14
+    droneTypeDropdown.Parent = contentFrame
+    
+    local dropdownCorner = Instance.new("UICorner")
+    dropdownCorner.CornerRadius = UDim.new(0, 5)
+    dropdownCorner.Parent = droneTypeDropdown
+    
+    local dropdownArrow = Instance.new("TextLabel")
+    dropdownArrow.Name = "DropdownArrow"
+    dropdownArrow.Size = UDim2.new(0, 20, 0, 20)
+    dropdownArrow.Position = UDim2.new(1, -25, 0, 5)
+    dropdownArrow.BackgroundTransparency = 1
+    dropdownArrow.Text = "▼"
+    dropdownArrow.TextColor3 = Color3.fromRGB(200, 200, 200)
+    dropdownArrow.Font = Enum.Font.Gotham
+    dropdownArrow.TextSize = 14
+    dropdownArrow.Parent = droneTypeDropdown
+    
+    local droneTypeMenu = Instance.new("Frame")
+    droneTypeMenu.Name = "DroneTypeMenu"
+    droneTypeMenu.Size = UDim2.new(1, 0, 0, 120)
+    droneTypeMenu.Position = UDim2.new(0, 0, 0, 60)
+    droneTypeMenu.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    droneTypeMenu.BorderSizePixel = 0
+    droneTypeMenu.Visible = false
+    droneTypeMenu.ZIndex = 5
+    droneTypeMenu.Parent = contentFrame
+    
+    local menuCorner = Instance.new("UICorner")
+    menuCorner.CornerRadius = UDim.new(0, 5)
+    menuCorner.Parent = droneTypeMenu
+    
+    -- Список доступных типов дронов
+    local droneTypes = {"OG-7V", "PNV-20", "Orlan-10", "RQ-4B", "TB-2"}
+    local buttonHeight = 30
+    
+    for i, dType in ipairs(droneTypes) do
+        local typeButton = Instance.new("TextButton")
+        typeButton.Name = dType .. "Button"
+        typeButton.Size = UDim2.new(1, 0, 0, buttonHeight)
+        typeButton.Position = UDim2.new(0, 0, 0, (i-1) * buttonHeight)
+        typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        typeButton.BackgroundTransparency = 0
+        typeButton.Text = dType
+        typeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        typeButton.Font = Enum.Font.Gotham
+        typeButton.TextSize = 14
+        typeButton.ZIndex = 6
+        typeButton.Parent = droneTypeMenu
+        
+        -- Подсветка при наведении
+        typeButton.MouseEnter:Connect(function()
+            typeButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        end)
+        
+        typeButton.MouseLeave:Connect(function()
+            typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        end)
+        
+        -- Выбор типа дрона
+        typeButton.MouseButton1Click:Connect(function()
+            droneType = dType
+            droneTypeDropdown.Text = dType
+            droneTypeMenu.Visible = false
+        end)
+    end
+    
+    -- Обработчик выпадающего списка
+    droneTypeDropdown.MouseButton1Click:Connect(function()
+        droneTypeMenu.Visible = not droneTypeMenu.Visible
+    end)
+    
+    -- Скрытие меню при клике в другом месте
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local position = input.Position
+            local x = position.X
+            local y = position.Y
+            
+            local menuAbsPos = droneTypeMenu.AbsolutePosition
+            local menuAbsSize = droneTypeMenu.AbsoluteSize
+            local dropdownAbsPos = droneTypeDropdown.AbsolutePosition
+            local dropdownAbsSize = droneTypeDropdown.AbsoluteSize
+            
+            local inDropdown = x >= dropdownAbsPos.X and x <= dropdownAbsPos.X + dropdownAbsSize.X and
+                              y >= dropdownAbsPos.Y and y <= dropdownAbsPos.Y + dropdownAbsSize.Y
+            
+            local inMenu = x >= menuAbsPos.X and x <= menuAbsPos.X + menuAbsSize.X and
+                          y >= menuAbsPos.Y and y <= menuAbsPos.Y + menuAbsSize.Y
+            
+            if droneTypeMenu.Visible and not (inMenu or inDropdown) then
+                droneTypeMenu.Visible = false
+            end
+        end
+    end)
+    
+    -- Секция выбора игрока (поз. исправлена)
+    local playerLabel = Instance.new("TextLabel")
+    playerLabel.Name = "PlayerLabel"
+    playerLabel.Size = UDim2.new(1, 0, 0, 20)
+    playerLabel.Position = UDim2.new(0, 0, 0, 70)
+    playerLabel.BackgroundTransparency = 1
+    playerLabel.Text = "Выбор игрока:"
+    playerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    playerLabel.Font = Enum.Font.Gotham
+    playerLabel.TextSize = 14
+    playerLabel.TextXAlignment = Enum.TextXAlignment.Left
+    playerLabel.Parent = contentFrame
+    
+    local playerDropdown = Instance.new("TextButton")
+    playerDropdown.Name = "PlayerDropdown"
+    playerDropdown.Size = UDim2.new(1, 0, 0, 30)
+    playerDropdown.Position = UDim2.new(0, 0, 0, 95)
+    playerDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    playerDropdown
