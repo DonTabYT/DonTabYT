@@ -3,10 +3,10 @@ local translations = { Tin = "Олово", Iridium = "Иридиум", Mithril =
 local orePrices = { Emerald = 150, Sapphire = 250, Silver = 150, Iron = 20, Lead = 30, Ruby = 300, Cobalt = 50, Topaz = 75, Tin = 10, Uranium = 180, Aluminium = 65, Gold = 350, Diamond = 1500, Vanadium = 240, Uranium = 180, Titanium = 400,}
 
 local ESPConfig = {
-    Enabled = true, MaxDistance = 100,
+    Enabled = true, MaxDistance = 170,
     ShowOres = { Tin = true, Cobalt = true, Iron = true, Gold = true, Silver = true, Aluminium = true, Lead = true, Palladium = true, Plutonium = true, Titanium = true, Topaz = true, Tungsten = true, Vanadium = true, Rhodium = true, Uranium = true },
     ShowGems = { Emerald = true, Sapphire = true, Ruby = true, Diamond = true, Amethyst = true, Poudretteite = true },
-    ShowPlayers = true, PlayerMaxDistance = 200, ShowPlayerNames = true, ShowPlayerDistance = true,
+    ShowPlayers = true, PlayerMaxDistance = 1000, ShowPlayerNames = true, ShowPlayerDistance = true,
     EnableFlyBind = false, EnableInfiniteJump = false,
     EnableClickTP = false,
     WalkSpeed = 16,
