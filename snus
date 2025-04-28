@@ -1,1621 +1,1035 @@
-Исходный скрипт:
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Network = ReplicatedStorage:WaitForChild("Network")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local oreColors = { Tin = Color3.fromRGB(192, 192, 192), Cobalt = Color3.fromRGB(0, 0, 255), Iron = Color3.fromRGB(160, 82, 45), Gold = Color3.fromRGB(255, 215, 0), Silver = Color3.fromRGB(200, 200, 200), Emerald = Color3.fromRGB(80, 220, 100), Sapphire = Color3.fromRGB(65, 105, 225), Ruby = Color3.fromRGB(220, 20, 60), Diamond = Color3.fromRGB(185, 242, 255), Amethyst = Color3.fromRGB(153, 102, 204), Aluminium = Color3.fromRGB(210, 210, 220), Lead = Color3.fromRGB(80, 80, 90), Palladium = Color3.fromRGB(210, 210, 210), Plutonium = Color3.fromRGB(0, 150, 0), Poudretteite = Color3.fromRGB(255, 182, 193), Titanium = Color3.fromRGB(170, 170, 185), Topaz = Color3.fromRGB(255, 165, 0), Tungsten = Color3.fromRGB(100, 100, 110), Vanadium = Color3.fromRGB(170, 175, 185), Rhodium = Color3.fromRGB(227, 235, 235), Uranium = Color3.fromRGB(70, 200, 70), }
+local translations = { Tin = "Олово", Iridium = "Иридиум", Mithril = "Мифрил", Cobalt = "Кобальт", Iron = "Железо", Gold = "Золото", Silver = "Серебро", Emerald = "Изумруд", Sapphire = "Сапфир", Ruby = "Рубин", Diamond = "Алмаз", Amethyst = "Аметист", Aluminium = "Алюминий", Lead = "Свинец", Palladium = "Палладий", Plutonium = "Плутоний", Poudretteite = "Пудреттеит", Titanium = "Титан", Topaz = "Топаз", Tungsten = "Вольфрам", Vanadium = "Ванадий", Rhodium = "Родий", Uranium = "Уран", Zultanite = "Султанит", }
+local orePrices = { Emerald = 150, Sapphire = 250, Silver = 150, Iron = 20, Lead = 30, Ruby = 300, Cobalt = 50, Topaz = 75, Tin = 10, Uranium = 180, Aluminium = 65, Gold = 350, Diamond = 1500, Vanadium = 240, Uranium = 180, Titanium = 400,}
 
-local LocalPlayer = Players.LocalPlayer
+local ESPConfig = {
+    Enabled = true, MaxDistance = 100,
+    ShowOres = { Tin = true, Cobalt = true, Iron = true, Gold = true, Silver = true, Aluminium = true, Lead = true, Palladium = true, Plutonium = true, Titanium = true, Topaz = true, Tungsten = true, Vanadium = true, Rhodium = true, Uranium = true },
+    ShowGems = { Emerald = true, Sapphire = true, Ruby = true, Diamond = true, Amethyst = true, Poudretteite = true },
+    ShowPlayers = true, PlayerMaxDistance = 200, ShowPlayerNames = true, ShowPlayerDistance = true,
+    EnableFlyBind = false, EnableInfiniteJump = false,
+    EnableClickTP = false,
+    WalkSpeed = 16,
+    DigAuraRadius = 15,
+    DigAuraCooldown = 0.5,
+    DigAuraTargetOres = {},
+}
 
--- Базовые настройки
-local droneType = "OG-7V"
-local targetPlayerName = "SleepyClerk"
-local spawnedDrone = nil
-local espConnection = nil
-local isGuiOpen = true
+local defaultOreColor = Color3.fromRGB(255, 255, 255); local defaultGemColor = Color3.fromRGB(255, 0, 255)
+local playerESPColor = Color3.fromRGB(120, 180, 120)
+local priceTextColor = Color3.fromRGB(200, 200, 0)
 
--- Функция для создания ESP
-local function CreateESP(object, text, color)
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ESP"
-    billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 200, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 5, 0)
-    billboard.Adornee = object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart")
-    
-    local textLabel = Instance.new("TextLabel")
-    textLabel.BackgroundTransparency = 1
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
-    textLabel.Text = text or "Дрон"
-    textLabel.TextColor3 = color or Color3.fromRGB(255, 0, 0)
-    textLabel.TextScaled = true
-    textLabel.Font = Enum.Font.GothamBold
-    textLabel.Parent = billboard
-    
-    -- Создаём обводку вокруг объекта
-    local highlight = Instance.new("Highlight")
-    highlight.FillColor = color or Color3.fromRGB(255, 0, 0)
-    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    highlight.FillTransparency = 0.5
-    highlight.OutlineTransparency = 0
-    highlight.Adornee = object
-    highlight.Parent = object
-    
-    billboard.Parent = object
-    
-    return billboard
+local isScriptRunning = true; local connections = {}; local savedWaypointPosition = nil; local playerEspInstances = {}
+local isXrayEnabled = false; local originalTerrainLocalTransparency = nil; local XRAY_TRANSPARENCY_MODIFIER = 0.9
+local isFlying = false; local flyBindConnection = nil; local jumpConnection = nil
+local isClickTPActive = false
+local defaultWalkSpeed = 16
+
+local digAuraActive = false
+local digAuraLoopConnection = nil
+local lastDigTime = 0
+local remoteEventMine = nil
+local digAuraContentFrame = nil
+local digAuraOreListFrame = nil
+local digAuraOreListLayout = nil
+local digAuraTabButton = nil -- Добавлено
+
+local Players = game:GetService("Players"); local Workspace = game:GetService("Workspace"); local UserInputService = game:GetService("UserInputService"); local RunService = game:GetService("RunService"); local TeleportService = game:GetService("TeleportService");
+local Mouse = Players.LocalPlayer:GetMouse()
+local task_wait = task.wait
+local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+local statusIndicatorGui = nil
+local statusFrame = nil
+local xrayStatusLabel = nil
+local flyStatusLabel = nil
+local jumpStatusLabel = nil
+local clickTpStatusLabel = nil
+local walkSpeedStatusLabel = nil
+local digAuraStatusLabel = nil -- Добавлено
+
+local function findMineRemote()
+    if remoteEventMine and remoteEventMine.Parent then return remoteEventMine end
+    local repStorage = game:GetService("ReplicatedStorage")
+    local success, result = pcall(function()
+        return repStorage:WaitForChild("MadCommEvents", 20):WaitForChild("3637", 20):WaitForChild("Activate", 20)
+    end)
+    if success and result then
+        print("RemoteEvent для добычи найден:", result:GetFullName())
+        remoteEventMine = result
+        return remoteEventMine
+    else
+        warn("Не удалось найти RemoteEvent для добычи! Путь: MadCommEvents/3597/Activate. Ошибка:", result) -- Обновили путь в сообщении об ошибке
+        return nil
+    end
 end
 
--- Создаем уведомление
-local function CreateNotification(text, duration)
-    duration = duration or 3
-    
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "Notification"
-    screenGui.ResetOnSpawn = false
-    
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 300, 0, 50)
-    frame.Position = UDim2.new(0.5, -150, 0.8, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    frame.BackgroundTransparency = 0.2
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
-    
-    local cornerRadius = Instance.new("UICorner")
-    cornerRadius.CornerRadius = UDim.new(0, 10)
-    cornerRadius.Parent = frame
-    
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Size = UDim2.new(1, -20, 1, 0)
-    textLabel.Position = UDim2.new(0, 10, 0, 0)
-    textLabel.BackgroundTransparency = 1
-    textLabel.Text = text
-    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    textLabel.Font = Enum.Font.GothamBold
-    textLabel.TextSize = 18
-    textLabel.TextWrapped = true
-    textLabel.Parent = frame
-    
-    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    
-    -- Анимация появления
-    frame.Position = UDim2.new(0.5, -150, 1.1, 0)
-    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-    game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 0.8, 0)}):Play()
-    
-    -- Автоматическое удаление
+local function createStatusIndicators()
+    if statusIndicatorGui and statusIndicatorGui.Parent then statusIndicatorGui:Destroy() end
+
+    statusIndicatorGui = Instance.new("ScreenGui")
+    statusIndicatorGui.Name = "StatusIndicatorGui"
+    statusIndicatorGui.ResetOnSpawn = false
+    statusIndicatorGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    statusIndicatorGui.DisplayOrder = 99
+
+    statusFrame = Instance.new("Frame")
+    statusFrame.Name = "StatusFrame"
+    statusFrame.AnchorPoint = Vector2.new(1, 1)
+    statusFrame.Position = UDim2.new(1, -10, 1, -10)
+    statusFrame.Size = UDim2.new(0, 180, 0, 120) -- Увеличили высоту под новый лейбл
+    statusFrame.BackgroundTransparency = 1
+    statusFrame.Parent = statusIndicatorGui
+
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.Padding = UDim.new(0, 3)
+    listLayout.FillDirection = Enum.FillDirection.Vertical
+    listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    listLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Parent = statusFrame
+
+    local function createLabel(name, text, order)
+        local label = Instance.new("TextLabel")
+        label.Name = name
+        label.Size = UDim2.new(1, 0, 0, 16)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 14
+        label.TextColor3 = Color3.fromRGB(220, 220, 220)
+        label.TextXAlignment = Enum.TextXAlignment.Right
+        label.Text = text
+        label.TextStrokeTransparency = 0.5
+        label.LayoutOrder = order
+        label.Parent = statusFrame
+        return label
+    end
+
+    digAuraStatusLabel = createLabel("DigAuraStatusLabel", "DigAura: ВЫКЛ", 6) -- Добавлено
+    walkSpeedStatusLabel = createLabel("WalkSpeedStatusLabel", "WalkSpeed: ?", 5)
+    clickTpStatusLabel = createLabel("ClickTpStatusLabel", "ClickTP: ВЫКЛ", 4)
+    jumpStatusLabel = createLabel("JumpStatusLabel", "Inf Jump: ВЫКЛ", 3)
+    flyStatusLabel = createLabel("FlyStatusLabel", "Зависание: ВЫКЛ", 2)
+    xrayStatusLabel = createLabel("XrayStatusLabel", "Xray: ВЫКЛ", 1)
+
+    statusIndicatorGui.Parent = playerGui
+    print("Status Indicator GUI создано.")
+
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        if statusFrame and listLayout then
+            statusFrame.Size = UDim2.new(0, math.max(150, listLayout.AbsoluteContentSize.X), 0, listLayout.AbsoluteContentSize.Y)
+        end
+    end)
+     task.wait(0.1)
+     if statusFrame and listLayout then
+          statusFrame.Size = UDim2.new(0, math.max(150, listLayout.AbsoluteContentSize.X), 0, listLayout.AbsoluteContentSize.Y)
+     end
+end
+
+local function updateStatusIndicators()
+    if not statusIndicatorGui or not statusIndicatorGui.Parent then return end
+
+    local greenColor = Color3.fromRGB(0, 255, 0)
+    local orangeColor = Color3.fromRGB(255, 165, 0)
+    local defaultColor = Color3.fromRGB(220, 220, 220)
+
+    if digAuraStatusLabel then
+        digAuraStatusLabel.Text = "DigAura: " .. (digAuraActive and "ВКЛ" or "ВЫКЛ")
+        digAuraStatusLabel.TextColor3 = digAuraActive and greenColor or defaultColor
+    end
+
+    if xrayStatusLabel then
+        xrayStatusLabel.Text = "Xray: " .. (isXrayEnabled and "ВКЛ" or "ВЫКЛ")
+        xrayStatusLabel.TextColor3 = isXrayEnabled and greenColor or defaultColor
+    end
+
+    if flyStatusLabel then
+        flyStatusLabel.Text = "Зависание: " .. (isFlying and "ВКЛ" or "ВЫКЛ")
+        flyStatusLabel.TextColor3 = isFlying and greenColor or defaultColor
+    end
+
+    if jumpStatusLabel then
+        local infJumpState = ESPConfig.EnableInfiniteJump
+        jumpStatusLabel.Text = "Inf Jump: " .. (infJumpState and "ВКЛ" or "ВЫКЛ")
+        jumpStatusLabel.TextColor3 = infJumpState and greenColor or defaultColor
+    end
+
+    if clickTpStatusLabel then
+        local clickTpState = ESPConfig.EnableClickTP
+        clickTpStatusLabel.Text = "ClickTP: " .. (clickTpState and "ВКЛ" or "ВЫКЛ")
+        clickTpStatusLabel.TextColor3 = clickTpState and greenColor or defaultColor
+    end
+
+    if walkSpeedStatusLabel then
+        local currentSpeed = ESPConfig.WalkSpeed
+        walkSpeedStatusLabel.Text = "WalkSpeed: " .. currentSpeed
+        walkSpeedStatusLabel.TextColor3 = (currentSpeed ~= defaultWalkSpeed) and orangeColor or defaultColor
+    end
+end
+
+local function getPlayerUnloaderLocation() local localPlayer = Players.LocalPlayer; if not localPlayer then return nil end; local targetOwnerId = localPlayer.UserId; local plotsFolder = Workspace:FindFirstChild("Plots"); if not plotsFolder then return nil end; local playerPlotModel, playerPlotName = nil, nil; for _, plotModel in ipairs(plotsFolder:GetChildren()) do local ownerId = plotModel:GetAttribute("OwnerId"); if ownerId and ownerId == targetOwnerId then playerPlotModel, playerPlotName = plotModel, plotModel.Name; break end; end; if not playerPlotModel then return nil end; local placeablesFolder = Workspace:FindFirstChild("Placeables"); if not placeablesFolder then return nil end; local placeablePlotFolder = placeablesFolder:FindFirstChild(playerPlotName); if not placeablePlotFolder then return nil end; local unloaderSystem = placeablePlotFolder:FindFirstChild("UnloaderSystem", true); local unloaderObject = nil; if unloaderSystem then unloaderObject = unloaderSystem:FindFirstChild("Unloader") else unloaderObject = placeablePlotFolder:FindFirstChild("Unloader", true) end; if unloaderObject then local sellLocation = nil; local sP, pCF = pcall(function() return unloaderObject:GetPivot() end); if sP and typeof(pCF) == "CFrame" then sellLocation = pCF.Position end; if not sellLocation and unloaderObject:IsA("Model") and unloaderObject.PrimaryPart then sellLocation = unloaderObject.PrimaryPart.Position end; if not sellLocation then local cP=unloaderObject:FindFirstChild("Centre"); if cP and cP:IsA("BasePart") then sellLocation = cP.Position end end; return sellLocation; end; return nil; end
+local function getPlayerPlotCenterLocation() local localPlayer = Players.LocalPlayer; if not localPlayer then return nil end; local targetOwnerId = localPlayer.UserId; local plotsFolder = Workspace:FindFirstChild("Plots"); if not plotsFolder then return nil end; local playerPlotModel = nil; for _, plotModel in ipairs(plotsFolder:GetChildren()) do local ownerId = plotModel:GetAttribute("OwnerId"); if ownerId and ownerId == targetOwnerId then playerPlotModel = plotModel; break end; end; if playerPlotModel then local location = nil; local success, result = pcall(function() return playerPlotModel:GetPivot() end); if success and typeof(result) == "CFrame" then location = result.Position; elseif playerPlotModel.PrimaryPart then location = playerPlotModel.PrimaryPart.Position end; return location; end; return nil; end
+local function getRandomColor() return Color3.fromRGB(math.random(50, 255), math.random(50, 255), math.random(50, 255)) end
+local function teleportPlayer(targetPosition, addVerticalOffset) if addVerticalOffset == nil then addVerticalOffset = true end; local player = Players.LocalPlayer; local character = player.Character; local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart"); if humanoidRootPart then local finalPosition = targetPosition + (addVerticalOffset and Vector3.new(0, 5, 0) or Vector3.zero); local success, err = pcall(function() humanoidRootPart.CFrame = CFrame.new(finalPosition) end); if success then print("Телепортирован в:", finalPosition) else warn("Ошибка телепортации:", err) end; return success; else warn("Не удалось найти HumanoidRootPart для телепортации.") end; return false; end
+local function applyXray() if not isScriptRunning then return end; local terrain = Workspace:FindFirstChild("Terrain"); if not (terrain and terrain:IsA("Terrain")) then warn("Terrain не найден в Workspace."); return end; if originalTerrainLocalTransparency == nil then originalTerrainLocalTransparency = terrain.LocalTransparencyModifier end; local successLTM, errLTM = pcall(function() terrain.LocalTransparencyModifier = XRAY_TRANSPARENCY_MODIFIER end); if successLTM then print(string.format("XRay Применен (LTM: %.2f -> %.2f)", originalTerrainLocalTransparency or -1, XRAY_TRANSPARENCY_MODIFIER)); else warn("Ошибка применения X-Ray LTM. Error:", errLTM); end; end
+local function revertXray() if not isScriptRunning then return end; local terrain = Workspace:FindFirstChild("Terrain"); if not (terrain and terrain:IsA("Terrain")) then warn("Terrain не найден в Workspace для отмены X-Ray."); return end; if originalTerrainLocalTransparency ~= nil then local currentLTM = terrain.LocalTransparencyModifier; local successLTM, errLTM = pcall(function() terrain.LocalTransparencyModifier = originalTerrainLocalTransparency end); if successLTM then print(string.format("Отменен LTM Terrain (Current LTM: %.2f | Reverted to LTM: %.2f)", currentLTM, terrain.LocalTransparencyModifier)); else warn("Ошибка отмены X-Ray LTM для Terrain. LTM Error:", errLTM); end; originalTerrainLocalTransparency = nil; else print("Original Terrain LTM property not found, skipping revert."); end; end
+
+local function createESP(part, typeName, color)
+    if not isScriptRunning or part:FindFirstChild("OreESP") then return end
+    if typeName == "CargoVol" or typeName == "nophr" then return end
+
+    local originalKey = nil
+    for key, value in pairs(translations) do if value == typeName then originalKey = key; break end end
+    if not originalKey then originalKey = typeName end
+
+    local price = orePrices[originalKey]
+    local displayText = typeName
+    if price then
+        displayText = displayText .. "\n[" .. price .. "$]"
+    end
+
+    local esp = Instance.new("BillboardGui")
+    esp.Name = "OreESP"
+    esp.Adornee = part
+    esp.Size = UDim2.new(0, 110, 0, 35)
+    esp.StudsOffset = Vector3.new(0, 1.0, 0)
+    esp.AlwaysOnTop = true
+    esp.MaxDistance = ESPConfig.MaxDistance
+    esp.Enabled = ESPConfig.Enabled
+    esp.LightInfluence = 0
+
+    local label = Instance.new("TextLabel")
+    label.Name = "InfoLabel"
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = displayText
+    label.TextColor3 = color
+    label.Font = Enum.Font.SourceSansBold
+    label.TextScaled = false
+    label.TextSize = 14
+    label.TextWrapped = true
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.TextXAlignment = Enum.TextXAlignment.Center
+    label.TextStrokeTransparency = 0.5
+    label.Parent = esp
+
+    esp.Parent = part
+end
+
+local function checkAttributes(part) if not isScriptRunning or not part:IsA("BasePart") or part:FindFirstChild("OreESP") then return end; if part.Name == "Handle" or part.Name == "Effect" or part:IsA("Accessory") or part:IsA("Terrain") then return end; local player = Players.LocalPlayer; local character = player.Character; if character and part:IsDescendantOf(character) then return end; local processed = false; local function tryCreateEsp(p, typeKey, configTable, colorTable, defaultColor, categoryName) if configTable[typeKey] == nil then oreColors[typeKey] = oreColors[typeKey] or getRandomColor(); configTable[typeKey] = true; translations[typeKey] = translations[typeKey] or typeKey; print("Новый тип ("..categoryName..") обнаружен и добавлен: " .. typeKey) end; if configTable[typeKey] ~= false and ESPConfig.Enabled then local displayName = translations[typeKey] or typeKey; local displayColor = oreColors[typeKey] or defaultColor; createESP(p, displayName, displayColor); return true end; return false; end; local oreType = part:GetAttribute("MineId"); if oreType and type(oreType) == "string" then if oreType ~= "CargoVol" and oreType ~= "nophr" then processed = tryCreateEsp(part, oreType, ESPConfig.ShowOres, oreColors, defaultOreColor, "руда по MineId") end end; if not processed then for attrName, attrValue in pairs(part:GetAttributes()) do if attrName ~= "MineId" and attrName ~= "CargoVol" and attrName ~= "nophr" and attrValue == true then local isGem = ESPConfig.ShowGems[attrName] ~= nil; local isOre = ESPConfig.ShowOres[attrName] ~= nil; if isGem then if tryCreateEsp(part, attrName, ESPConfig.ShowGems, oreColors, defaultGemColor, "камень по атрибуту") then processed = true; break end elseif isOre then if tryCreateEsp(part, attrName, ESPConfig.ShowOres, oreColors, defaultOreColor, "руда по атрибуту") then processed = true; break end end end end end; end
+local function updateESPVisibility()
+    if not isScriptRunning then return end
     task.spawn(function()
-        task.wait(duration)
-        tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-        local tween = game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 1.1, 0)})
-        tween.Completed:Connect(function()
-            screenGui:Destroy()
-        end)
-        tween:Play()
-    end)
-    
-    return screenGui
-end
+        local function updateSingleESP(part)
+            local esp = part:FindFirstChild("OreESP")
+            if esp and esp:IsA("BillboardGui") then
+                local label = esp:FindFirstChild("InfoLabel")
+                if not label then esp:Destroy(); return end
 
--- Функция для поиска дрона в мире
-local function FindDrone()
-    -- Поиск дрона в папке Workspace.Drones
-    local foundDrone = nil
-    if workspace:FindFirstChild("Drones") then
-        print("✅ Найдена папка Drones в Workspace")
-        
-        -- Получаем недавно созданные дроны (последние в списке)
-        local droneFolder = workspace.Drones
-        local drones = droneFolder:GetChildren()
-        
-        if #drones > 0 then
-            -- Берём последний добавленный дрон
-            foundDrone = drones[#drones]
-            print("✅ Найден дрон:", foundDrone.Name)
-            
-            -- Проверяем, что это действительно дрон нужного типа
-            local isCorrectDroneType = false
-            
-            -- Проверяем по имени или дочерним компонентам
-            if foundDrone:FindFirstChild("EV") then
-                isCorrectDroneType = true
-            end
-            
-            for _, part in ipairs(foundDrone:GetDescendants()) do
-                if part.Name == droneType or part.Name:match("Battery") then
-                    isCorrectDroneType = true
-                    break
+                local textLines = string.split(label.Text, "\n")
+                local baseName = textLines[1] or label.Text
+
+                local originalTypeName = nil
+                for key, value in pairs(translations) do if value == baseName then originalTypeName = key; break end end
+                if not originalTypeName then originalTypeName = baseName end
+
+                local isOre = ESPConfig.ShowOres[originalTypeName] ~= nil
+                local isGem = ESPConfig.ShowGems[originalTypeName] ~= nil
+                local typeEnabled = (isOre and ESPConfig.ShowOres[originalTypeName] ~= false) or (isGem and ESPConfig.ShowGems[originalTypeName] ~= false)
+
+                esp.Enabled = ESPConfig.Enabled and typeEnabled
+                esp.MaxDistance = ESPConfig.MaxDistance
+
+                if esp.Enabled then
+                    local price = orePrices[originalTypeName]
+                    local displayText = baseName
+                    if price then displayText = displayText .. "\n[" .. price .. "$]" end
+                    if label.Text ~= displayText then label.Text = displayText end
                 end
             end
-            
-            if not isCorrectDroneType then
-                warn("⚠️ Найденный дрон может не соответствовать типу " .. droneType)
-            end
-        else
-            warn("❌ В папке Drones не найдено ни одного дрона")
         end
+        local function findAndUpdateESPRecursive(parent) for i, obj in ipairs(parent:GetChildren()) do if obj:IsA("BasePart") then updateSingleESP(obj) end; if #obj:GetChildren() > 0 and (obj:IsA("Model") or obj:IsA("Folder") or obj.ClassName == "Workspace") then findAndUpdateESPRecursive(obj) end; if i % 150 == 0 then task_wait() end end end
+        findAndUpdateESPRecursive(Workspace); print("Обновление видимости ESP завершено.")
+    end)
+end
+local function removeAllESP() print("Удаление всех элементов ESP..."); local count = 0; local function findAndRemoveESPRecursive(parent) for i, obj in ipairs(parent:GetChildren()) do if obj:IsA("BasePart") then local esp = obj:FindFirstChild("OreESP"); if esp then esp:Destroy(); count = count + 1 end end; if #obj:GetChildren() > 0 and (obj:IsA("Model") or obj:IsA("Folder") or obj.ClassName == "Workspace") then findAndRemoveESPRecursive(obj) end; if i % 200 == 0 then task_wait() end end end; findAndRemoveESPRecursive(Workspace); print("Удаление ESP завершено. Удалено:", count, "элементов."); end
+local function createOrUpdatePlayerESP(targetPlayer)
+    if not isScriptRunning or targetPlayer == Players.LocalPlayer then return end
+    local character = targetPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then removePlayerESP(targetPlayer); return end
+
+    local esp = playerEspInstances[targetPlayer.UserId]
+    if not esp then
+        esp = Instance.new("BillboardGui")
+        esp.Name = "PlayerESP"
+        esp.Adornee = hrp
+        esp.Size = UDim2.new(0, 120, 0, 35)
+        esp.StudsOffset = Vector3.new(0, 2.8, 0)
+        esp.AlwaysOnTop = true
+        esp.ResetOnSpawn = false
+        esp.LightInfluence = 0
+
+        local label = Instance.new("TextLabel")
+        label.Name = "InfoLabel"
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = ""
+        label.TextColor3 = playerESPColor
+        label.Font = Enum.Font.SourceSansBold
+        label.TextScaled = true
+        label.TextStrokeTransparency = 0.5
+        label.Parent = esp
+
+        esp.Parent = hrp
+        playerEspInstances[targetPlayer.UserId] = esp
+    end
+
+    if esp.Adornee ~= hrp then esp.Adornee = hrp end
+    esp.Enabled = ESPConfig.Enabled and ESPConfig.ShowPlayers
+    esp.MaxDistance = ESPConfig.PlayerMaxDistance
+
+    local label = esp:FindFirstChild("InfoLabel")
+    if label then
+        if label.TextColor3 ~= playerESPColor then label.TextColor3 = playerESPColor end
+        local playerPos = hrp.Position
+        local localHrp = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local distance = localHrp and math.floor((localHrp.Position - playerPos).Magnitude) or 0
+        local displayText = ""; if ESPConfig.ShowPlayerNames then displayText = targetPlayer.DisplayName end; if ESPConfig.ShowPlayerDistance then displayText = displayText .. (ESPConfig.ShowPlayerNames and "\n" or "") .. "[" .. distance .. "m]" end
+        label.Text = displayText
+    end
+end
+local function removePlayerESP(player) local userId = player.UserId; if playerEspInstances[userId] then playerEspInstances[userId]:Destroy(); playerEspInstances[userId] = nil; end; end
+local function updateAllPlayerESPVisibility() if not isScriptRunning then return end; for userId, esp in pairs(playerEspInstances) do local targetPlayer = Players:GetPlayerByUserId(userId); if targetPlayer then createOrUpdatePlayerESP(targetPlayer) else removePlayerESP({UserId = userId}) end; end; end
+local function startPlayerESPUpdater() local renderStepConn = RunService.RenderStepped:Connect(function() if not isScriptRunning or not ESPConfig.Enabled or not ESPConfig.ShowPlayers then return end; for userId, esp in pairs(playerEspInstances) do if esp and esp.Adornee and esp.Adornee.Parent then local label = esp:FindFirstChild("InfoLabel"); local hrp = esp.Adornee; local localHrp = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart"); if label and hrp and localHrp then local distance = math.floor((localHrp.Position - hrp.Position).Magnitude); if esp.MaxDistance ~= ESPConfig.PlayerMaxDistance then esp.MaxDistance = ESPConfig.PlayerMaxDistance end; local displayText = ""; local targetPlayer = Players:GetPlayerByUserId(userId); if targetPlayer and ESPConfig.ShowPlayerNames then displayText = targetPlayer.DisplayName end; if ESPConfig.ShowPlayerDistance then displayText = displayText .. (ESPConfig.ShowPlayerNames and "\n" or "") .. "[" .. distance .. "m]" end; if label.Text ~= displayText then label.Text = displayText end; end; else removePlayerESP({UserId = userId}) end end end); table.insert(connections, renderStepConn); local playerAddedConn = Players.PlayerAdded:Connect(createOrUpdatePlayerESP); local playerRemovingConn = Players.PlayerRemoving:Connect(removePlayerESP); table.insert(connections, playerAddedConn); table.insert(connections, playerRemovingConn); for _, player in ipairs(Players:GetPlayers()) do createOrUpdatePlayerESP(player) end; print("Player ESP Updater запущен."); end
+
+local function toggleFly(enable)
+    local player = Players.LocalPlayer
+    local character = player and player.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if enable then
+        isFlying = not isFlying
+        hrp.Anchored = isFlying
+        print("Fly Toggled:", isFlying)
     else
-        warn("❌ Папка Drones не найдена в Workspace")
-    end
-    
-    -- Если дрон не найден в Drones, ищем по всему Workspace
-    if not foundDrone then
-        print("Ищем дрон по всему Workspace...")
-        local recentModels = {}
-        
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= workspace.Terrain then
-                -- Проверяем, содержит ли модель часть Battery или EV
-                local hasBattery = false
-                for _, part in ipairs(obj:GetDescendants()) do
-                    if part.Name:match("Battery") or part.Name == "EV" then
-                        hasBattery = true
-                        break
-                    end
-                end
-                
-                if hasBattery then
-                    table.insert(recentModels, obj)
-                end
-            end
-        end
-        
-        if #recentModels > 0 then
-            foundDrone = recentModels[#recentModels]
-            print("✅ Найден вероятный дрон:", foundDrone.Name)
+        if isFlying then
+            hrp.Anchored = false
+            isFlying = false
+            print("Fly Disabled")
         end
     end
-    
-    return foundDrone
+    updateStatusIndicators()
 end
 
--- Функция для создания дрона
-local function CreateDrone()
-    if spawnedDrone and spawnedDrone.Parent then
-        CreateNotification("⚠️ Дрон уже существует! Сначала удалите текущий.", 3)
-        return
-    end
-    
-    print("Создаём дрон типа: " .. droneType)
-    local creationSuccess = Network:WaitForChild("CreateDrone"):InvokeServer(droneType)
-    print("Результат создания дрона:", creationSuccess)
-    
-    -- Пауза для появления дрона в игровом мире
-    task.wait(2)
-    
-    -- Поиск дрона
-    spawnedDrone = FindDrone()
-    
-    if not spawnedDrone then
-        warn("❌ Дрон не был найден в игровом мире")
-        CreateNotification("❌ Дрон не был найден в игровом мире", 3)
-        return false
-    end
-    
-    -- Добавляем ESP на дрон
-    local espTag = CreateESP(spawnedDrone, "ДРОН | " .. droneType, Color3.fromRGB(0, 255, 0))
-    print("✅ ESP добавлен на дрон")
-    
-    -- Убедимся, что у дрона есть PrimaryPart для телепортации
-    local primaryPart = spawnedDrone.PrimaryPart
-    if not primaryPart then
-        -- Если PrimaryPart не установлен, найдём любую часть для установки
-        for _, part in pairs(spawnedDrone:GetDescendants()) do
-            if part:IsA("BasePart") then
-                spawnedDrone.PrimaryPart = part
-                primaryPart = part
-                print("✅ Установлен PrimaryPart для дрона:", part.Name)
-                break
-            end
+local function setOrUpdateWalkSpeed(speed)
+    local player = Players.LocalPlayer
+    local character = player and player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        if defaultWalkSpeed == 16 and humanoid.WalkSpeed ~= 16 then
+             defaultWalkSpeed = humanoid.WalkSpeed
+             print("Captured default WalkSpeed:", defaultWalkSpeed)
         end
-    end
-    
-    if not primaryPart then
-        warn("❌ Не удалось найти часть для установки PrimaryPart на дроне.")
-        CreateNotification("❌ Не удалось найти PrimaryPart для дрона", 3)
-        return false
-    end
-    
-    -- Функция для постоянного обновления положения ESP
-    local function UpdateESP()
-        if espTag and espTag.Parent and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and primaryPart then
-            local distance = (LocalPlayer.Character.HumanoidRootPart.Position - primaryPart.Position).Magnitude
-            espTag.TextLabel.Text = string.format("ДРОН | %s\n%.1f м", droneType, distance)
-        end
-    end
-    
-    -- Обновление ESP каждый кадр
-    if espConnection then
-        espConnection:Disconnect()
-    end
-    espConnection = RunService.RenderStepped:Connect(UpdateESP)
-    
-    -- Очистка при удалении дрона
-    spawnedDrone.AncestryChanged:Connect(function(_, parent)
-        if parent == nil then
-            if espConnection then
-                espConnection:Disconnect()
-                espConnection = nil
-            end
-            spawnedDrone = nil
-            print("❌ Дрон был удалён")
-            CreateNotification("❌ Дрон был удалён", 3)
-        end
-    end)
-    
-    -- Для отладки сохраняем дрон в глобальную переменную
-    _G.lastSpawnedDrone = spawnedDrone
-    print("Дрон сохранён в _G.lastSpawnedDrone для отладки")
-    
-    CreateNotification("✅ Дрон создан! Используйте интерфейс для управления.", 3)
-    return true
-end
-
--- Функция для телепортации дрона к игроку
-local function TeleportDroneToPlayer()
-    if not (spawnedDrone and spawnedDrone.Parent) then
-        CreateNotification("❌ Сначала создайте дрон!", 3)
-        return
-    end
-    
-    -- Получаем целевого игрока
-    local targetPlayer = Players:FindFirstChild(targetPlayerName)
-    if not (targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")) then
-        warn("❌ Не удалось найти игрока или его позицию.")
-        CreateNotification("❌ Игрок не найден: " .. targetPlayerName, 3)
-        return
-    end
-    
-    -- Определяем первичную часть дрона
-    local primaryPart = spawnedDrone.PrimaryPart
-    if not primaryPart then
-        for _, part in pairs(spawnedDrone:GetDescendants()) do
-            if part:IsA("BasePart") then
-                spawnedDrone.PrimaryPart = part
-                primaryPart = part
-                break
-            end
-        end
-    end
-    
-    if not primaryPart then
-        CreateNotification("❌ Не найден PrimaryPart дрона", 3)
-        return
-    end
-    
-    -- Телепортация дрона к игроку
-    local targetPos = targetPlayer.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 0)
-    print("Телепортируем дрон к игроку:", targetPlayerName, "на позицию:", tostring(targetPos))
-    
-    -- Пробуем все возможные методы телепортации
-    print("Метод 1: SetPrimaryPartCFrame")
-    pcall(function()
-        spawnedDrone:SetPrimaryPartCFrame(CFrame.new(targetPos))
-    end)
-    
-    print("Метод 2: Перемещение через свойство CFrame")
-    pcall(function()
-        for _, part in pairs(spawnedDrone:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CFrame = CFrame.new(targetPos)
-            end
-        end
-    end)
-    
-    print("Метод 3: Сетевые события")
-    -- Пытаемся найти и использовать событие для управления дроном
-    local possibleEvents = {
-        "MoveDrone", 
-        "TeleportDrone", 
-        "SetDronePosition", 
-        "UpdateDronePosition",
-        "Drive"
-    }
-    
-    for _, eventName in ipairs(possibleEvents) do
-        local event = Network:FindFirstChild(eventName)
-        if event then
-            print("Пробуем событие:", eventName)
-            pcall(function()
-                if event:IsA("RemoteEvent") then
-                    event:FireServer(spawnedDrone, CFrame.new(targetPos))
-                elseif event:IsA("RemoteFunction") then
-                    event:InvokeServer(spawnedDrone, CFrame.new(targetPos))
-                end
-            end)
-        end
-    end
-    
-    CreateNotification("✅ Дрон телепортирован к " .. targetPlayerName, 3)
-    print("✅ Все методы телепортации испробованы")
-end
-
--- Функция для взрыва дрона
-local function ExplodeDrone()
-    if not (spawnedDrone and spawnedDrone.Parent) then
-        CreateNotification("❌ Сначала создайте дрон!", 3)
-        return
-    end
-    
-    local explodeEvent = Network:FindFirstChild("ExplodeDrone")
-    if explodeEvent then
-        print("💥 Активируем взрыв дрона")
-        
-        -- Создаем визуальный эффект до взрыва
-        local primaryPart = spawnedDrone.PrimaryPart
-        if primaryPart then
-            -- Создаем эффект мигания перед взрывом
-            for i = 1, 3 do
-                if not spawnedDrone or not spawnedDrone.Parent then
-                    break
-                end
-                
-                for _, part in pairs(spawnedDrone:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.Color = Color3.fromRGB(255, 0, 0)
-                    end
-                end
-                task.wait(0.1)
-                
-                if not spawnedDrone or not spawnedDrone.Parent then
-                    break
-                end
-                
-                for _, part in pairs(spawnedDrone:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.Color = Color3.fromRGB(255, 255, 0)
-                    end
-                end
-                task.wait(0.1)
-            end
-        end
-        
-        -- Запускаем взрыв
-        local success, errorMsg = pcall(function()
-            explodeEvent:FireServer(spawnedDrone)
-        end)
-        
+        local success, err = pcall(function() humanoid.WalkSpeed = speed end)
         if success then
-            CreateNotification("💥 Дрон взорван!", 3)
-            if espConnection then
-                espConnection:Disconnect()
-                espConnection = nil
-            end
-            spawnedDrone = nil
+            ESPConfig.WalkSpeed = speed
+            updateStatusIndicators()
         else
-            warn("❌ Ошибка при взрыве дрона:", errorMsg)
-            CreateNotification("❌ Ошибка при взрыве дрона", 3)
+            warn("Failed to set walkspeed:", err)
         end
     else
-        -- Пробуем альтернативные имена событий
-        local alternativeEvents = {"DetonateDrone", "DestoryDrone", "DestroyDrone"}
-        local eventFound = false
-        
-        for _, eventName in ipairs(alternativeEvents) do
-            local event = Network:FindFirstChild(eventName)
-            if event then
-                eventFound = true
-                local success, errorMsg = pcall(function()
-                    event:FireServer(spawnedDrone)
-                end)
-                
-                if success then
-                    CreateNotification("💥 Дрон взорван!", 3)
-                    if espConnection then
-                        espConnection:Disconnect()
-                        espConnection = nil
-                    end
-                    spawnedDrone = nil
-                    break
-                end
-            end
+        warn("Humanoid not found to set WalkSpeed.")
+    end
+    return humanoid ~= nil
+end
+
+local function onInputBegan(input, gameProcessed)
+    if gameProcessed or not isScriptRunning then return end
+
+    if input.KeyCode == Enum.KeyCode.V and ESPConfig.EnableFlyBind then
+        toggleFly(true)
+    end
+
+    if input.KeyCode == Enum.KeyCode.Space and ESPConfig.EnableInfiniteJump then
+        local player = Players.LocalPlayer
+        local character = player and player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end)
         end
-        
-        if not eventFound then
-            warn("❌ Событие взрыва не найдено")
-            CreateNotification("❌ Событие взрыва не найдено", 3)
-        end
+    end
+
+    if input.KeyCode == Enum.KeyCode.LeftAlt and ESPConfig.EnableClickTP then
+        isClickTPActive = true
+        print("Click TP: Активирован (удерживайте и кликните)")
+    end
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and isClickTPActive and ESPConfig.EnableClickTP then
+         if Mouse and Mouse.Hit then
+             local targetPos = Mouse.Hit.Position
+             print("Click TP: Телепортация к", targetPos)
+             teleportPlayer(targetPos, false)
+         else
+            warn("Click TP: Не удалось получить позицию клика.")
+         end
     end
 end
 
--- Создание GUI
-local function CreateGUI()
-    -- Удаляем старый GUI если он существует
-    if LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI") then
-        LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI"):Destroy()
-    end
-    
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "DroneControlGUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    
-    -- Основная панель
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 300, 0, 320)
-    mainFrame.Position = UDim2.new(0.02, 0, 0.3, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Active = true
-    mainFrame.Draggable = true
-    mainFrame.Parent = screenGui
-    
-    -- Добавляем скругление углов
-    local cornerRadius = Instance.new("UICorner")
-    cornerRadius.CornerRadius = UDim.new(0, 8)
-    cornerRadius.Parent = mainFrame
-    
-    -- Заголовок
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 30)
-    titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
-    
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 8)
-    titleCorner.Parent = titleBar
-    
-    local bottomFrame = Instance.new("Frame")
-    bottomFrame.Name = "BottomFrame"
-    bottomFrame.Size = UDim2.new(1, 0, 0, 15)
-    bottomFrame.Position = UDim2.new(0, 0, 0.5, 0)
-    bottomFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    bottomFrame.BorderSizePixel = 0
-    bottomFrame.Parent = titleBar
-    
-    local titleText = Instance.new("TextLabel")
-    titleText.Name = "TitleText"
-    titleText.Size = UDim2.new(1, -60, 1, 0)
-    titleText.Position = UDim2.new(0, 10, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.Text = "Управление дроном"
-    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextSize = 14
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Parent = titleBar
-    
-    -- Кнопка закрытия
-    local closeButton = Instance.new("TextButton")
-    closeButton.Name = "CloseButton"
-    closeButton.Size = UDim2.new(0, 24, 0, 24)
-    closeButton.Position = UDim2.new(1, -27, 0, 3)
-    closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-    closeButton.Text = "X"
-    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.TextSize = 14
-    closeButton.Parent = titleBar
-    
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 12)
-    closeCorner.Parent = closeButton
-    
-    -- Кнопка скрытия
-    local hideButton = Instance.new("TextButton")
-    hideButton.Name = "HideButton"
-    hideButton.Size = UDim2.new(0, 24, 0, 24)
-    hideButton.Position = UDim2.new(1, -55, 0, 3)
-    hideButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    hideButton.Text = "-"
-    hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    hideButton.Font = Enum.Font.GothamBold
-    hideButton.TextSize = 14
-    hideButton.Parent = titleBar
-    
-    local hideCorner = Instance.new("UICorner")
-    hideCorner.CornerRadius = UDim.new(0, 12)
-    hideCorner.Parent = hideButton
-    
-    -- Контейнер для содержимого
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "ContentFrame"
-    contentFrame.Size = UDim2.new(1, -20, 1, -40)
-    contentFrame.Position = UDim2.new(0, 10, 0, 35)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.Parent = mainFrame
-    
-    -- Секция выбора типа дрона
-    local droneTypeLabel = Instance.new("TextLabel")
-    droneTypeLabel.Name = "DroneTypeLabel"
-    droneTypeLabel.Size = UDim2.new(1, 0, 0, 20)
-    droneTypeLabel.BackgroundTransparency = 1
-    droneTypeLabel.Text = "Тип дрона:"
-    droneTypeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    droneTypeLabel.Font = Enum.Font.Gotham
-    droneTypeLabel.TextSize = 14
-    droneTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    droneTypeLabel.Parent = contentFrame
-    
-    local droneTypeDropdown = Instance.new("TextButton")
-    droneTypeDropdown.Name = "DroneTypeDropdown"
-    droneTypeDropdown.Size = UDim2.new(1, 0, 0, 30)
-    droneTypeDropdown.Position = UDim2.new(0, 0, 0, 25)
-    droneTypeDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    droneTypeDropdown.Text = droneType
-    droneTypeDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
-    droneTypeDropdown.Font = Enum.Font.Gotham
-    droneTypeDropdown.TextSize = 14
-    droneTypeDropdown.Parent = contentFrame
-    
-    local dropdownCorner = Instance.new("UICorner")
-    dropdownCorner.CornerRadius = UDim.new(0, 5)
-    dropdownCorner.Parent = droneTypeDropdown
-    
-    local dropdownArrow = Instance.new("TextLabel")
-    dropdownArrow.Name = "DropdownArrow"
-    dropdownArrow.Size = UDim2.new(0, 20, 0, 20)
-    dropdownArrow.Position = UDim2.new(1, -25, 0, 5)
-    dropdownArrow.BackgroundTransparency = 1
-    dropdownArrow.Text = "▼"
-    dropdownArrow.TextColor3 = Color3.fromRGB(200, 200, 200)
-    dropdownArrow.Font = Enum.Font.Gotham
-    dropdownArrow.TextSize = 14
-    dropdownArrow.Parent = droneTypeDropdown
-    
-    local droneTypeMenu = Instance.new("Frame")
-    droneTypeMenu.Name = "DroneTypeMenu"
-    droneTypeMenu.Size = UDim2.new(1, 0, 0, 120)
-    droneTypeMenu.Position = UDim2.new(0, 0, 0, 60)
-    droneTypeMenu.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    droneTypeMenu.BorderSizePixel = 0
-    droneTypeMenu.Visible = false
-    droneTypeMenu.ZIndex = 5
-    droneTypeMenu.Parent = contentFrame
-    
-    local menuCorner = Instance.new("UICorner")
-    menuCorner.CornerRadius = UDim.new(0, 5)
-    menuCorner.Parent = droneTypeMenu
-    
-    -- Список доступных типов дронов
-    local droneTypes = {"OG-7V", "PNV-20", "Orlan-10", "RQ-4B", "TB-2"}
-    local buttonHeight = 30
-    
-    for i, dType in ipairs(droneTypes) do
-        local typeButton = Instance.new("TextButton")
-        typeButton.Name = dType .. "Button"
-        typeButton.Size = UDim2.new(1, 0, 0, buttonHeight)
-        typeButton.Position = UDim2.new(0, 0, 0, (i-1) * buttonHeight)
-        typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        typeButton.BackgroundTransparency = 0
-        typeButton.Text = dType
-        typeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        typeButton.Font = Enum.Font.Gotham
-        typeButton.TextSize = 14
-        typeButton.ZIndex = 6
-        typeButton.Parent = droneTypeMenu
-        
-        -- Подсветка при наведении
-        typeButton.MouseEnter:Connect(function()
-            typeButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        end)
-        
-        typeButton.MouseLeave:Connect(function()
-            typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        end)
-        
-        -- Выбор типа дрона
-        typeButton.MouseButton1Click:Connect(function()
-            droneType = dType
-            droneTypeDropdown.Text = dType
-            droneTypeMenu.Visible = false
-        end)
-    end
-    
-    -- Обработчик выпадающего списка
-    droneTypeDropdown.MouseButton1Click:Connect(function()
-        droneTypeMenu.Visible = not droneTypeMenu.Visible
-    end)
-    
-    -- Скрытие меню при клике в другом месте
-    UserInputService.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local position = input.Position
-            local x = position.X
-            local y = position.Y
-            
-            local menuAbsPos = droneTypeMenu.AbsolutePosition
-            local menuAbsSize = droneTypeMenu.AbsoluteSize
-            local dropdownAbsPos = droneTypeDropdown.AbsolutePosition
-            local dropdownAbsSize = droneTypeDropdown.AbsoluteSize
-            
-            local inDropdown = x >= dropdownAbsPos.X and x <= dropdownAbsPos.X + dropdownAbsSize.X and
-                              y >= dropdownAbsPos.Y and y <= dropdownAbsPos.Y + dropdownAbsSize.Y
-            
-            local inMenu = x >= menuAbsPos.X and x <= menuAbsPos.X + menuAbsSize.X and
-                          y >= menuAbsPos.Y and y <= menuAbsPos.Y + menuAbsSize.Y
-            
-            if droneTypeMenu.Visible and not (inMenu or inDropdown) then
-                droneTypeMenu.Visible = false
-            end
+local function onInputEnded(input, gameProcessed)
+     if gameProcessed or not isScriptRunning then return end
+
+     if input.KeyCode == Enum.KeyCode.LeftAlt and ESPConfig.EnableClickTP then
+        isClickTPActive = false
+        print("Click TP: Деактивирован")
+     end
+end
+
+local function setupExtraFeaturesListeners()
+    if flyBindConnection then flyBindConnection:Disconnect() end
+    flyBindConnection = UserInputService.InputBegan:Connect(onInputBegan)
+    table.insert(connections, flyBindConnection)
+
+    local clickTPEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
+    table.insert(connections, clickTPEndedConn)
+
+    local charAddedConn = Players.LocalPlayer.CharacterAdded:Connect(function(character)
+        print("Персонаж загружен, попытка применить WalkSpeed.")
+        local humanoid = character:WaitForChild("Humanoid")
+        task.wait(0.5)
+        if isScriptRunning then
+             local applied = setOrUpdateWalkSpeed(ESPConfig.WalkSpeed)
+             if applied then
+                 print("WalkSpeed", ESPConfig.WalkSpeed, "применен к новому персонажу.")
+             else
+                  warn("Не удалось применить WalkSpeed к новому персонажу.")
+             end
         end
     end)
-    
-    -- Секция выбора игрока
-    local playerLabel = Instance.new("TextLabel")
-    playerLabel.Name = "PlayerLabel"
-    playerLabel.Size = UDim2.new(1, 0, 0, 20)
-    playerLabel.Position = UDim2.new(0, 0, 0, 70)
-    playerLabel.BackgroundTransparency = 1
-    playerLabel.Text = "Выбор игрока:"
-    playerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    playerLabel.Font = Enum.Font.Gotham
-    playerLabel.TextSize = 14
-    playerLabel.TextXAlignment = Enum.TextXAlignment.Left
-    playerLabel.Parent = contentFrame
-    
-    local playerDropdown = Instance.new("TextButton")
-   playerDropdown.Name = "PlayerDropdown"
-    playerDropdown.Size = UDim2.new(1, 0, 0, 30)
-    playerDropdown.Position = UDim2.new(0, 0, 0, 95)
-    playerDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    playerDropdown.Text = targetPlayerName
-    playerDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
-    playerDropdown.Font = Enum.Font.Gotham
-    playerDropdown.TextSize = 14
-    playerDropdown.Parent = contentFrame
-    
-    local playerDropdownCorner = Instance.new("UICorner")
-    playerDropdownCorner.CornerRadius = UDim.new(0, 5)
-    playerDropdownCorner.Parent = playerDropdown
-    
-    local playerDropdownArrow = Instance.new("TextLabel")
-    playerDropdownArrow.Name = "DropdownArrow"
-    playerDropdownArrow.Size = UDim2.new(0, 20, 0, 20)
-    playerDropdownArrow.Position = UDim2.new(1, -25, 0, 5)
-    playerDropdownArrow.BackgroundTransparency = 1
-    playerDropdownArrow.Text = "▼"
-    playerDropdownArrow.TextColor3 = Color3.fromRGB(200, 200, 200)
-    playerDropdownArrow.Font = Enum.Font.Gotham
-    playerDropdownArrow.TextSize = 14
-    playerDropdownArrow.Parent = playerDropdown
-    
-    local playerMenu = Instance.new("ScrollingFrame")
-    playerMenu.Name = "PlayerMenu"
-    playerMenu.Size = UDim2.new(1, 0, 0, 120)
-    playerMenu.Position = UDim2.new(0, 0, 0, 130)
-    playerMenu.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    playerMenu.BorderSizePixel = 0
-    playerMenu.ScrollBarThickness = 6
-    playerMenu.Visible = false
-    playerMenu.ZIndex = 5
-    playerMenu.ScrollingDirection = Enum.ScrollingDirection.Y
-    playerMenu.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
-    playerMenu.CanvasSize = UDim2.new(0, 0, 0, 0) -- Будет обновлено динамически
-    playerMenu.Parent = contentFrame
-    
-    local playerMenuCorner = Instance.new("UICorner")
-    playerMenuCorner.CornerRadius = UDim.new(0, 5)
-    playerMenuCorner.Parent = playerMenu
-    
-    -- Функция для обновления списка игроков
-    local function UpdatePlayerList()
-        -- Очищаем текущий список
-        for _, child in pairs(playerMenu:GetChildren()) do
-            if child:IsA("TextButton") then
+    table.insert(connections, charAddedConn)
+
+    task.wait(1)
+    if isScriptRunning and Players.LocalPlayer.Character then
+        print("Применение начального WalkSpeed:", ESPConfig.WalkSpeed)
+        setOrUpdateWalkSpeed(ESPConfig.WalkSpeed)
+    end
+
+    print("Extra Features Listeners настроены (включая Click TP и WalkSpeed).")
+end
+
+local function findClosestTargetOre()
+    if not isScriptRunning or not Players.LocalPlayer.Character then return nil end
+    local playerHrp = Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not playerHrp then return nil end
+
+    local playerPos = playerHrp.Position
+    local closestOre = nil
+    local minDistance = ESPConfig.DigAuraRadius + 1
+
+    local partsInRadius = Workspace:GetPartBoundsInRadius(playerPos, ESPConfig.DigAuraRadius)
+
+    for _, part in ipairs(partsInRadius) do
+        if part and part.Parent and part:IsA("BasePart") then
+            local oreType = part:GetAttribute("MineId")
+            local isTargetType = false
+
+            if oreType and type(oreType) == "string" and oreType ~= "CargoVol" and oreType ~= "nophr" then
+                if ESPConfig.DigAuraTargetOres[oreType] == true then
+                    isTargetType = true
+                end
+            else
+                 for attrName, attrValue in pairs(part:GetAttributes()) do
+                     if attrValue == true and ESPConfig.DigAuraTargetOres[attrName] == true then
+                         isTargetType = true
+                         oreType = attrName
+                         break
+                     end
+                 end
+            end
+
+            if isTargetType then
+                local distance = (playerPos - part.Position).Magnitude
+                if distance <= ESPConfig.DigAuraRadius and distance < minDistance then
+                     minDistance = distance
+                     closestOre = part
+                end
+            end
+        end
+    end
+
+    return closestOre
+end
+
+local function runDigAuraLoop()
+    if not isScriptRunning or not digAuraActive then
+        print("DigAura остановлена.")
+        return
+    end
+
+    local oreToDig = findClosestTargetOre()
+
+    if oreToDig then
+        local currentTime = tick()
+        if currentTime - lastDigTime >= ESPConfig.DigAuraCooldown then
+            local mineEvent = findMineRemote()
+            if mineEvent then
+                local orePos = oreToDig.Position
+                local oreTypeAttr = oreToDig:GetAttribute("MineId")
+                local oreType = "Unknown"
+                if oreTypeAttr and type(oreTypeAttr) == "string" then
+                    oreType = oreTypeAttr
+                else
+                     for attrName, attrValue in pairs(oreToDig:GetAttributes()) do
+                          if attrValue == true and ESPConfig.DigAuraTargetOres[attrName] == true then
+                               oreType = attrName
+                               break
+                          end
+                     end
+                end
+
+                -- ЗАМЕНЯЕМ ПЕРВЫЙ АРГУМЕНТ С 24 НА 252:
+                local args = {
+                    [1] = 59,
+                    [2] = orePos
+                }
+                -- КОНЕЦ ИЗМЕНЕНИЯ
+
+                local success, err = pcall(function()
+                    mineEvent:FireServer(unpack(args))
+                end)
+                if success then
+                     print("DigAura: Копаем", (translations[oreType] or oreType), "в", orePos)
+                     lastDigTime = currentTime
+                     local esp = oreToDig:FindFirstChild("OreESP")
+                     if esp then task.delay(0.1, function() if esp then esp:Destroy() end end) end
+                else
+                    warn("DigAura: Ошибка FireServer:", err)
+                end
+            else
+                 warn("DigAura: RemoteEvent для добычи не найден, остановка.")
+                 digAuraActive = false
+                 updateStatusIndicators()
+                 if digAuraLoopConnection then digAuraLoopConnection:Disconnect(); digAuraLoopConnection = nil; end
+                 return
+            end
+        end
+    end
+
+    digAuraLoopConnection = RunService.Heartbeat:Once(runDigAuraLoop)
+end
+
+
+local function startDigAura()
+    if digAuraActive or not isScriptRunning then return end
+    local mineEvent = findMineRemote()
+    if not mineEvent then
+        warn("Невозможно запустить DigAura: RemoteEvent не найден.")
+        return
+    end
+    digAuraActive = true
+    lastDigTime = 0
+    print("DigAura запущена. Радиус:", ESPConfig.DigAuraRadius, "Кулдаун:", ESPConfig.DigAuraCooldown)
+    updateStatusIndicators()
+    if digAuraLoopConnection then digAuraLoopConnection:Disconnect(); digAuraLoopConnection = nil; end
+    task.spawn(runDigAuraLoop)
+end
+
+local function stopDigAura()
+    if not digAuraActive then return end
+    digAuraActive = false
+    if digAuraLoopConnection then
+        digAuraLoopConnection:Disconnect()
+        digAuraLoopConnection = nil
+    end
+    print("DigAura остановлена.")
+    updateStatusIndicators()
+end
+
+local function disableExtraFeatures()
+    if isFlying then toggleFly(false) end
+    if flyBindConnection then flyBindConnection:Disconnect(); flyBindConnection = nil end
+    isClickTPActive = false
+
+    local player = Players.LocalPlayer
+    local character = player and player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        local success, err = pcall(function() humanoid.WalkSpeed = defaultWalkSpeed end)
+        if success then
+            print("WalkSpeed сброшен на:", defaultWalkSpeed)
+            ESPConfig.WalkSpeed = defaultWalkSpeed
+            updateStatusIndicators()
+        else
+            warn("Не удалось сбросить WalkSpeed:", err)
+        end
+    end
+
+    print("Extra Features Listeners отключены и настройки сброшены.")
+end
+
+local function disconnectAllListeners() print("Отключение слушателей событий..."); stopDigAura(); disableExtraFeatures(); for _, conn in ipairs(connections) do pcall(function() if conn then conn:Disconnect() end end) end; connections = {}; print("Слушатели отключены."); end
+local function setupESPAndListeners() if not isScriptRunning then return end; print("Настройка ESP и слушателей..."); local function connectListener(instance, eventName, callback) if instance then local conn = instance[eventName]:Connect(callback); table.insert(connections, conn); return conn end; warn("Не удалось подключить слушатель:", eventName, "к", instance); return nil end; print("Обработка существующих объектов..."); local processedCount = 0; for i, obj in ipairs(Workspace:GetDescendants()) do if obj:IsA("BasePart") then checkAttributes(obj); processedCount = processedCount + 1 end; if i % 500 == 0 then task_wait() end end; print("Обработка существующих объектов завершена. Проверено:", processedCount); connectListener(Workspace, "DescendantAdded", function(obj) if not isScriptRunning then return end; task.spawn(function() if obj:IsA("BasePart") then task_wait(0.1); checkAttributes(obj) elseif obj:IsA("Model") then task_wait(0.2); for _, child in ipairs(obj:GetDescendants()) do if child:IsA("BasePart") then checkAttributes(child) end; task_wait() end end end) end); connectListener(Workspace, "DescendantRemoving", function(obj) end); print("Настройка ESP и слушателей завершена."); updateESPVisibility(); end
+local TELEPORT_WAIT_UNLOAD = 0.75; local POST_ACTION_WAIT_UNLOAD = 0.1; local RETURN_WAIT_UNLOAD = 3
+local function getSellObjectInstance_Unload() local localPlayer = Players.LocalPlayer; if not localPlayer then return nil end; local targetOwnerId = localPlayer.UserId; local plotsFolder = Workspace:FindFirstChild("Plots"); if not plotsFolder then return nil end; local playerPlotModel, playerPlotName = nil, nil; for _, plotModel in ipairs(plotsFolder:GetChildren()) do local ownerId = plotModel:GetAttribute("OwnerId"); if ownerId and ownerId == targetOwnerId then playerPlotModel, playerPlotName = plotModel, plotModel.Name; break end; end; if not playerPlotModel then return nil end; local placeablesFolder = Workspace:FindFirstChild("Placeables"); if not placeablesFolder then return nil end; local placeablePlotFolder = placeablesFolder:FindFirstChild(playerPlotName); if not placeablePlotFolder then return nil end; local unloaderSystem = placeablePlotFolder:FindFirstChild("UnloaderSystem", true); local unloaderObject = nil; if unloaderSystem then unloaderObject = unloaderSystem:FindFirstChild("Unloader") else unloaderObject = placeablePlotFolder:FindFirstChild("Unloader", true) end; return unloaderObject; end
+local function triggerSellMechanism_Unload(sellObject) if not sellObject then return false end; local cargoVolume = sellObject:FindFirstChild("CargoVolume"); if not cargoVolume then return false end; local proximityPrompt = cargoVolume:FindFirstChild("CargoPrompt"); if proximityPrompt and proximityPrompt:IsA("ProximityPrompt") and proximityPrompt.Enabled then local cleanActionText = (proximityPrompt.ActionText:match("^%s*(.-)%s*$") or ""):lower(); if cleanActionText == "add items" then local success, err = pcall(function() proximityPrompt:InputHoldBegin(); task_wait(); proximityPrompt:InputHoldEnd() end); if not success then warn("[UnloadScript] Ошибка активации Prompt:", err) end; return success; end; end; return false; end
+local function executeUnloadSequence_Unload() local player = Players.LocalPlayer; local character = player and player.Character; local hrp = character and character:FindFirstChild("HumanoidRootPart"); if not hrp then warn("[UnloadScript] Не найден HumanoidRootPart для начала выгрузки."); return false end; local originalPosition = hrp.Position; print("[UnloadScript] Исходная позиция сохранена:", originalPosition); local unloadSuccess = false; local sellObject = getSellObjectInstance_Unload(); if sellObject then local sellLocation = nil; local sP, pCF = pcall(function() return sellObject:GetPivot() end); if sP and typeof(pCF) == "CFrame" then sellLocation = pCF.Position end; if not sellLocation and sellObject:IsA("Model") and sellObject.PrimaryPart then sellLocation = sellObject.PrimaryPart.Position end; if not sellLocation then local cP=sellObject:FindFirstChild("Centre"); if cP and cP:IsA("BasePart") then sellLocation = cP.Position end end; if sellLocation then print("[UnloadScript] Телепортация к точке продажи..."); if teleportPlayer(sellLocation, false) then task_wait(TELEPORT_WAIT_UNLOAD); print("[UnloadScript] Активация механизма продажи..."); if triggerSellMechanism_Unload(sellObject) then task_wait(POST_ACTION_WAIT_UNLOAD); print("[UnloadScript] Продажа инициирована. Ожидание", RETURN_WAIT_UNLOAD, "сек..."); task_wait(RETURN_WAIT_UNLOAD); unloadSuccess = true; else warn("[UnloadScript] Не удалось активировать механизм продажи."); end else warn("[UnloadScript] Не удалось телепортироваться к точке продажи."); end else warn("[UnloadScript] Не удалось определить позицию точки продажи."); end else warn("[UnloadScript] Не удалось найти объект Unloader на базе."); end; print("[UnloadScript] Возвращение на исходную позицию..."); if not teleportPlayer(originalPosition, false) then warn("[UnloadScript] Не удалось вернуться на исходную позицию."); end; if unloadSuccess then print("--- [UnloadScript] Последовательность выгрузки завершена (с попыткой возврата) ---"); else warn("--- [UnloadScript] Не удалось выполнить основную часть выгрузки ---"); end; return unloadSuccess; end
+local playerListFrameRef; local playerListLayoutRef
+local function updatePlayerList() if not isScriptRunning or not playerListFrameRef or not playerListFrameRef.Parent or not playerListLayoutRef then return end; local currentPlayers = Players:GetPlayers(); local localPlayer = Players.LocalPlayer; for _, child in ipairs(playerListFrameRef:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end; end; local layoutOrderCounter = 1; for _, player in ipairs(currentPlayers) do if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then local playerButton = Instance.new("TextButton"); playerButton.Name = player.Name; playerButton.Text = player.DisplayName; playerButton.Size = UDim2.new(1, -10, 0, 30); playerButton.BackgroundColor3 = Color3.fromRGB(70, 70, 90); playerButton.TextColor3 = Color3.fromRGB(230, 230, 230); playerButton.Font = Enum.Font.SourceSans; playerButton.TextSize = 14; playerButton.LayoutOrder = layoutOrderCounter; playerButton.Parent = playerListFrameRef; playerButton.MouseButton1Click:Connect(function() if not isScriptRunning then return end; local targetPlayer = Players:FindFirstChild(player.Name); local targetCharacter = targetPlayer and targetPlayer.Character; local targetHrp = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart"); if targetHrp then print("Телепортация к игроку:", targetPlayer.DisplayName); teleportPlayer(targetHrp.Position, true); else warn("Не удалось найти HumanoidRootPart цели:", targetPlayer and targetPlayer.DisplayName or player.Name); end; end); layoutOrderCounter = layoutOrderCounter + 1; end; end; task.wait(); if playerListLayoutRef and playerListFrameRef then playerListFrameRef.CanvasSize = UDim2.new(0, 0, 0, playerListLayoutRef.AbsoluteContentSize.Y + 5); end; end
+local function startPlayerListUpdater() task.spawn(function() while isScriptRunning do pcall(updatePlayerList); task.wait(5); end; print("Обновление списка игроков остановлено."); end); end
+
+local function createESPMenu()
+    local player = Players.LocalPlayer;
+    if playerGui:FindFirstChild("OreESPMenu") then playerGui.OreESPMenu:Destroy() end;
+    local gui = Instance.new("ScreenGui"); gui.Name = "OreESPMenu"; gui.ResetOnSpawn = false; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
+    local mainFrame = Instance.new("Frame"); mainFrame.Name = "MainFrame"; mainFrame.Size = UDim2.new(0, 350, 0, 580);
+    mainFrame.Position = UDim2.new(0.5, -175, 0.5, -290); mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40); mainFrame.BorderSizePixel = 1; mainFrame.BorderColor3 = Color3.fromRGB(80, 80, 80); mainFrame.Active = true; mainFrame.Draggable = true; mainFrame.Visible = true; mainFrame.Parent = gui; mainFrame.ClipsDescendants = true;
+    local title = Instance.new("TextLabel"); title.Name = "Title"; title.Size = UDim2.new(1, 0, 0, 30); title.BackgroundColor3 = Color3.fromRGB(60, 60, 60); title.TextColor3 = Color3.fromRGB(255, 255, 255); title.Font = Enum.Font.SourceSansBold; title.TextSize = 18; title.Text = "Mining Z"; title.Parent = mainFrame;
+
+    local mainTabsFrame = Instance.new("Frame"); mainTabsFrame.Name = "MainTabsFrame"; mainTabsFrame.Size = UDim2.new(1, -20, 0, 30); mainTabsFrame.Position = UDim2.new(0, 10, 0, 40); mainTabsFrame.BackgroundTransparency = 1; mainTabsFrame.Parent = mainFrame;
+    local tabWidth = 1/4
+    local tabSpacing = 1
+
+    local espTabButton = Instance.new("TextButton"); espTabButton.Name = "ESPTab"; espTabButton.Size = UDim2.new(tabWidth, -tabSpacing, 1, 0); espTabButton.Position = UDim2.new(0, 0, 0, 0); espTabButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80); espTabButton.Text = "ESP"; espTabButton.TextColor3 = Color3.fromRGB(255, 255, 255); espTabButton.Font = Enum.Font.SourceSansBold; espTabButton.TextSize = 14; espTabButton.Parent = mainTabsFrame;
+    local teleportsTabButton = Instance.new("TextButton"); teleportsTabButton.Name = "TeleportsTab"; teleportsTabButton.Size = UDim2.new(tabWidth, -tabSpacing, 1, 0); teleportsTabButton.Position = UDim2.new(tabWidth * 1, tabSpacing * 1, 0, 0); teleportsTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); teleportsTabButton.Text = "Телепорты"; teleportsTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); teleportsTabButton.Font = Enum.Font.SourceSansBold; teleportsTabButton.TextSize = 14; teleportsTabButton.Parent = mainTabsFrame;
+    digAuraTabButton = Instance.new("TextButton"); digAuraTabButton.Name = "DigAuraTab"; digAuraTabButton.Size = UDim2.new(tabWidth, -tabSpacing, 1, 0); digAuraTabButton.Position = UDim2.new(tabWidth * 2, tabSpacing * 2, 0, 0); digAuraTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); digAuraTabButton.Text = "DigAura"; digAuraTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); digAuraTabButton.Font = Enum.Font.SourceSansBold; digAuraTabButton.TextSize = 14; digAuraTabButton.Parent = mainTabsFrame;
+    local etcTabButton = Instance.new("TextButton"); etcTabButton.Name = "EtcTab"; etcTabButton.Size = UDim2.new(tabWidth, -tabSpacing, 1, 0); etcTabButton.Position = UDim2.new(tabWidth * 3, tabSpacing * 3, 0, 0); etcTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); etcTabButton.Text = "Прочее"; etcTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); etcTabButton.Font = Enum.Font.SourceSansBold; etcTabButton.TextSize = 14; etcTabButton.Parent = mainTabsFrame;
+
+    local contentHolder = Instance.new("Frame"); contentHolder.Name = "ContentHolder"; contentHolder.Size = UDim2.new(1, -20, 1, -80); contentHolder.Position = UDim2.new(0, 10, 0, 75); contentHolder.BackgroundTransparency = 1; contentHolder.BorderSizePixel = 0; contentHolder.Parent = mainFrame;
+    local espContentFrame = Instance.new("Frame"); espContentFrame.Name = "ESPContent"; espContentFrame.Size = UDim2.new(1, 0, 1, 0); espContentFrame.BackgroundTransparency = 1; espContentFrame.Visible = true; espContentFrame.Parent = contentHolder; espContentFrame.ClipsDescendants = true;
+    local teleportsContentFrame = Instance.new("ScrollingFrame"); teleportsContentFrame.Name = "TeleportsContent"; teleportsContentFrame.Size = UDim2.new(1, 0, 1, 0); teleportsContentFrame.BackgroundTransparency = 1; teleportsContentFrame.Visible = false; teleportsContentFrame.Parent = contentHolder; teleportsContentFrame.ClipsDescendants = true; teleportsContentFrame.CanvasSize = UDim2.new(0,0,0,0); teleportsContentFrame.ScrollBarThickness = 6;
+    digAuraContentFrame = Instance.new("ScrollingFrame"); digAuraContentFrame.Name = "DigAuraContent"; digAuraContentFrame.Size = UDim2.new(1, 0, 1, 0); digAuraContentFrame.BackgroundTransparency = 1; digAuraContentFrame.Visible = false; digAuraContentFrame.Parent = contentHolder; digAuraContentFrame.ClipsDescendants = true; digAuraContentFrame.CanvasSize = UDim2.new(0,0,0,0); digAuraContentFrame.ScrollBarThickness = 6;
+    local etcContentFrame = Instance.new("ScrollingFrame"); etcContentFrame.Name = "EtcContent"; etcContentFrame.Size = UDim2.new(1, 0, 1, 0); etcContentFrame.BackgroundTransparency = 1; etcContentFrame.Visible = false; etcContentFrame.Parent = contentHolder; etcContentFrame.ClipsDescendants = true; etcContentFrame.CanvasSize = UDim2.new(0,0,0,0); etcContentFrame.ScrollBarThickness = 6;
+
+    -- ================== Содержимое вкладки ESP ==================
+    local globalToggleFrame = Instance.new("Frame"); globalToggleFrame.Name = "GlobalToggleFrame"; globalToggleFrame.Size = UDim2.new(1, 0, 0, 40); globalToggleFrame.Position = UDim2.new(0, 0, 0, 0); globalToggleFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); globalToggleFrame.Parent = espContentFrame;
+    local globalToggleLabel = Instance.new("TextLabel"); globalToggleLabel.Size = UDim2.new(0.7, 0, 1, 0); globalToggleLabel.BackgroundTransparency = 1; globalToggleLabel.Text = "ESP Включен (Глобально)"; globalToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255); globalToggleLabel.Font = Enum.Font.SourceSans; globalToggleLabel.TextSize = 16; globalToggleLabel.TextXAlignment = Enum.TextXAlignment.Left; globalToggleLabel.Position = UDim2.new(0, 10, 0, 0); globalToggleLabel.Parent = globalToggleFrame;
+    local globalToggleButton = Instance.new("TextButton"); globalToggleButton.Size = UDim2.new(0, 60, 0, 30); globalToggleButton.Position = UDim2.new(1, -70, 0.5, -15); globalToggleButton.BackgroundColor3 = ESPConfig.Enabled and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0); globalToggleButton.Text = ESPConfig.Enabled and "ВКЛ" or "ВЫКЛ"; globalToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255); globalToggleButton.Font = Enum.Font.SourceSansBold; globalToggleButton.TextSize = 14; globalToggleButton.Parent = globalToggleFrame;
+    local espSubTabsFrame = Instance.new("Frame"); espSubTabsFrame.Name = "EspSubTabsFrame"; espSubTabsFrame.Size = UDim2.new(1, 0, 0, 30); espSubTabsFrame.Position = UDim2.new(0, 0, 0, 45); espSubTabsFrame.BackgroundTransparency = 1; espSubTabsFrame.Parent = espContentFrame;
+    local espSubTabsLayout = Instance.new("UIListLayout"); espSubTabsLayout.FillDirection = Enum.FillDirection.Horizontal; espSubTabsLayout.Padding = UDim.new(0, 5); espSubTabsLayout.VerticalAlignment = Enum.VerticalAlignment.Center; espSubTabsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; espSubTabsLayout.Parent = espSubTabsFrame;
+    local oreSubTab = Instance.new("TextButton"); oreSubTab.Name = "OreSubTab"; oreSubTab.Size = UDim2.new(0.33, -4, 1, 0); oreSubTab.BackgroundColor3 = Color3.fromRGB(70, 70, 70); oreSubTab.Text = "Руды"; oreSubTab.TextColor3 = Color3.fromRGB(255, 255, 255); oreSubTab.Font = Enum.Font.SourceSansBold; oreSubTab.TextSize = 14; oreSubTab.Parent = espSubTabsFrame;
+    local gemSubTab = Instance.new("TextButton"); gemSubTab.Name = "GemSubTab"; gemSubTab.Size = UDim2.new(0.33, -4, 1, 0); gemSubTab.BackgroundColor3 = Color3.fromRGB(55, 55, 55); gemSubTab.Text = "Камни"; gemSubTab.TextColor3 = Color3.fromRGB(200, 200, 200); gemSubTab.Font = Enum.Font.SourceSansBold; gemSubTab.TextSize = 14; gemSubTab.Parent = espSubTabsFrame;
+    local playerSubTab = Instance.new("TextButton"); playerSubTab.Name = "PlayerSubTab"; playerSubTab.Size = UDim2.new(0.33, -4, 1, 0); playerSubTab.BackgroundColor3 = Color3.fromRGB(55, 55, 55); playerSubTab.Text = "Игроки"; playerSubTab.TextColor3 = Color3.fromRGB(200, 200, 200); playerSubTab.Font = Enum.Font.SourceSansBold; playerSubTab.TextSize = 14; playerSubTab.Parent = espSubTabsFrame;
+    local espListContentHolder = Instance.new("Frame"); espListContentHolder.Name = "ESPListContentHolder"; espListContentHolder.Size = UDim2.new(1, 0, 1, -80); espListContentHolder.Position = UDim2.new(0, 0, 0, 80); espListContentHolder.BackgroundTransparency = 1; espListContentHolder.Parent = espContentFrame; espListContentHolder.ClipsDescendants = true;
+    local oreGemFrame = Instance.new("Frame"); oreGemFrame.Name = "OreGemFrame"; oreGemFrame.Size = UDim2.new(1, 0, 1, 0); oreGemFrame.BackgroundTransparency = 1; oreGemFrame.Visible = true; oreGemFrame.Parent = espListContentHolder;
+    local oreGemLayout = Instance.new("UIListLayout"); oreGemLayout.Padding = UDim.new(0, 5); oreGemLayout.SortOrder = Enum.SortOrder.LayoutOrder; oreGemLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; oreGemLayout.Parent = oreGemFrame;
+    local distanceFrame = Instance.new("Frame"); distanceFrame.Name = "OreDistanceFrame"; distanceFrame.Size = UDim2.new(1, 0, 0, 50); distanceFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); distanceFrame.LayoutOrder = 1; distanceFrame.Parent = oreGemFrame;
+    local distanceLabel = Instance.new("TextLabel"); distanceLabel.Name = "OreDistLabel"; distanceLabel.Size = UDim2.new(1, -10, 0, 20); distanceLabel.Position = UDim2.new(0, 10, 0, 5); distanceLabel.BackgroundTransparency = 1; distanceLabel.Text = "Дистанция (Руды/Камни): " .. ESPConfig.MaxDistance; distanceLabel.TextColor3 = Color3.fromRGB(255, 255, 255); distanceLabel.Font = Enum.Font.SourceSans; distanceLabel.TextSize = 16; distanceLabel.TextXAlignment = Enum.TextXAlignment.Left; distanceLabel.Parent = distanceFrame;
+    local distanceSlider = Instance.new("Frame"); distanceSlider.Name = "OreDistSlider"; distanceSlider.Size = UDim2.new(1, -20, 0, 6); distanceSlider.Position = UDim2.new(0, 10, 1, -15); distanceSlider.BackgroundColor3 = Color3.fromRGB(80, 80, 80); distanceSlider.Parent = distanceFrame;
+    local distanceKnob = Instance.new("TextButton"); distanceKnob.Name = "OreDistKnob"; distanceKnob.Size = UDim2.new(0, 16, 0, 16); local maxDistSliderValue = 2000; distanceKnob.Position = UDim2.fromScale(math.clamp(ESPConfig.MaxDistance / maxDistSliderValue, 0, 1), 0.5) + UDim2.fromOffset(0, -8); distanceKnob.BackgroundColor3 = Color3.fromRGB(200, 200, 200); distanceKnob.Text = ""; distanceKnob.Parent = distanceSlider; distanceKnob.AutoButtonColor = false; distanceKnob.ZIndex = 2;
+    local listContentFrame = Instance.new("ScrollingFrame"); listContentFrame.Name = "ListContentFrame"; listContentFrame.Size = UDim2.new(1, 0, 1, -55); listContentFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45); listContentFrame.BorderSizePixel = 0; listContentFrame.ScrollBarThickness = 6; listContentFrame.CanvasSize = UDim2.new(0, 0, 0, 0); listContentFrame.LayoutOrder = 2; listContentFrame.Parent = oreGemFrame; listContentFrame.ScrollingDirection = Enum.ScrollingDirection.Y; listContentFrame.CanvasPosition = Vector2.zero;
+    local listLayout = Instance.new("UIListLayout"); listLayout.Parent = listContentFrame; listLayout.Padding = UDim.new(0, 5); listLayout.SortOrder = Enum.SortOrder.Name; listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center;
+    local playerFrame = Instance.new("Frame"); playerFrame.Name = "PlayerFrame"; playerFrame.Size = UDim2.new(1, 0, 1, 0); playerFrame.BackgroundTransparency = 1; playerFrame.Visible = false; playerFrame.Parent = espListContentHolder;
+    local playerFrameLayout = Instance.new("UIListLayout"); playerFrameLayout.Padding = UDim.new(0, 5); playerFrameLayout.SortOrder = Enum.SortOrder.LayoutOrder; playerFrameLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; playerFrameLayout.Parent = playerFrame;
+    local playerToggleFrame = Instance.new("Frame"); playerToggleFrame.Size = UDim2.new(1, 0, 0, 40); playerToggleFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); playerToggleFrame.LayoutOrder = 1; playerToggleFrame.Parent = playerFrame;
+    local playerToggleLabel = Instance.new("TextLabel"); playerToggleLabel.Size = UDim2.new(0.7, 0, 1, 0); playerToggleLabel.BackgroundTransparency = 1; playerToggleLabel.Text = "ESP Игроков Включен"; playerToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255); playerToggleLabel.Font = Enum.Font.SourceSans; playerToggleLabel.TextSize = 16; playerToggleLabel.TextXAlignment = Enum.TextXAlignment.Left; playerToggleLabel.Position = UDim2.new(0, 10, 0, 0); playerToggleLabel.Parent = playerToggleFrame;
+    local playerToggleButton = Instance.new("TextButton"); playerToggleButton.Size = UDim2.new(0, 60, 0, 30); playerToggleButton.Position = UDim2.new(1, -70, 0.5, -15); playerToggleButton.BackgroundColor3 = ESPConfig.ShowPlayers and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0); playerToggleButton.Text = ESPConfig.ShowPlayers and "ВКЛ" or "ВЫКЛ"; playerToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255); playerToggleButton.Font = Enum.Font.SourceSansBold; playerToggleButton.TextSize = 14; playerToggleButton.Parent = playerToggleFrame;
+    local playerDistanceFrame = Instance.new("Frame"); playerDistanceFrame.Size = UDim2.new(1, 0, 0, 50); playerDistanceFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); playerDistanceFrame.LayoutOrder = 2; playerDistanceFrame.Parent = playerFrame;
+    local playerDistanceLabel = Instance.new("TextLabel"); playerDistanceLabel.Name = "PlayerDistLabel"; playerDistanceLabel.Size = UDim2.new(1, -10, 0, 20); playerDistanceLabel.Position = UDim2.new(0, 10, 0, 5); playerDistanceLabel.BackgroundTransparency = 1; playerDistanceLabel.Text = "Дистанция (Игроки): " .. ESPConfig.PlayerMaxDistance; playerDistanceLabel.TextColor3 = Color3.fromRGB(255, 255, 255); playerDistanceLabel.Font = Enum.Font.SourceSans; playerDistanceLabel.TextSize = 16; playerDistanceLabel.TextXAlignment = Enum.TextXAlignment.Left; playerDistanceLabel.Parent = playerDistanceFrame;
+    local playerDistanceSlider = Instance.new("Frame"); playerDistanceSlider.Name = "PlayerDistSlider"; playerDistanceSlider.Size = UDim2.new(1, -20, 0, 6); playerDistanceSlider.Position = UDim2.new(0, 10, 1, -15); playerDistanceSlider.BackgroundColor3 = Color3.fromRGB(80, 80, 80); playerDistanceSlider.Parent = playerDistanceFrame;
+    local playerDistanceKnob = Instance.new("TextButton"); playerDistanceKnob.Name = "PlayerDistKnob"; playerDistanceKnob.Size = UDim2.new(0, 16, 0, 16); local playerMaxDistSliderValue = 33333; playerDistanceKnob.Position = UDim2.fromScale(math.clamp(ESPConfig.PlayerMaxDistance / playerMaxDistSliderValue, 0, 1), 0.5) + UDim2.fromOffset(0, -8); playerDistanceKnob.BackgroundColor3 = Color3.fromRGB(200, 200, 200); playerDistanceKnob.Text = ""; playerDistanceKnob.Parent = playerDistanceSlider; playerDistanceKnob.AutoButtonColor = false; playerDistanceKnob.ZIndex = 2;
+    local playerNameCheckFrame = Instance.new("Frame"); playerNameCheckFrame.Size = UDim2.new(1, 0, 0, 35); playerNameCheckFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); playerNameCheckFrame.LayoutOrder = 3; playerNameCheckFrame.Parent = playerFrame;
+    local playerNameCheckbox = Instance.new("TextButton"); playerNameCheckbox.Name = "PlayerNameCheckbox"; playerNameCheckbox.Size = UDim2.new(0, 24, 0, 24); playerNameCheckbox.Position = UDim2.new(0, 10, 0.5, -12); playerNameCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); playerNameCheckbox.BorderSizePixel = 1; playerNameCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); playerNameCheckbox.Text = ESPConfig.ShowPlayerNames and "X" or ""; playerNameCheckbox.Font = Enum.Font.SourceSansBold; playerNameCheckbox.TextSize = 18; playerNameCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); playerNameCheckbox.Parent = playerNameCheckFrame;
+    local playerNameLabel = Instance.new("TextLabel"); playerNameLabel.Size = UDim2.new(1, -50, 1, 0); playerNameLabel.Position = UDim2.new(0, 45, 0, 0); playerNameLabel.BackgroundTransparency = 1; playerNameLabel.Font = Enum.Font.SourceSans; playerNameLabel.TextSize = 16; playerNameLabel.TextColor3 = Color3.fromRGB(220, 220, 220); playerNameLabel.Text = "Показывать Ники"; playerNameLabel.TextXAlignment = Enum.TextXAlignment.Left; playerNameLabel.Parent = playerNameCheckFrame;
+    local playerDistCheckFrame = Instance.new("Frame"); playerDistCheckFrame.Size = UDim2.new(1, 0, 0, 35); playerDistCheckFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); playerDistCheckFrame.LayoutOrder = 4; playerDistCheckFrame.Parent = playerFrame;
+    local playerDistCheckbox = Instance.new("TextButton"); playerDistCheckbox.Name = "PlayerDistCheckbox"; playerDistCheckbox.Size = UDim2.new(0, 24, 0, 24); playerDistCheckbox.Position = UDim2.new(0, 10, 0.5, -12); playerDistCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); playerDistCheckbox.BorderSizePixel = 1; playerDistCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); playerDistCheckbox.Text = ESPConfig.ShowPlayerDistance and "X" or ""; playerDistCheckbox.Font = Enum.Font.SourceSansBold; playerDistCheckbox.TextSize = 18; playerDistCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); playerDistCheckbox.Parent = playerDistCheckFrame;
+    local playerDistLabel = Instance.new("TextLabel"); playerDistLabel.Size = UDim2.new(1, -50, 1, 0); playerDistLabel.Position = UDim2.new(0, 45, 0, 0); playerDistLabel.BackgroundTransparency = 1; playerDistLabel.Font = Enum.Font.SourceSans; playerDistLabel.TextSize = 16; playerDistLabel.TextColor3 = Color3.fromRGB(220, 220, 220); playerDistLabel.Text = "Показывать Дистанцию"; playerDistLabel.TextXAlignment = Enum.TextXAlignment.Left; playerDistLabel.Parent = playerDistCheckFrame;
+
+    -- ================== Содержимое вкладки Телепорты ==================
+    local teleportsLayout = Instance.new("UIListLayout"); teleportsLayout.Padding = UDim.new(0, 10); teleportsLayout.SortOrder = Enum.SortOrder.LayoutOrder; teleportsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; teleportsLayout.Parent = teleportsContentFrame;
+    local tpMineButton = Instance.new("TextButton"); tpMineButton.Name = "TP_Mine"; tpMineButton.Size = UDim2.new(0.9, 0, 0, 40); tpMineButton.BackgroundColor3 = Color3.fromRGB(65, 105, 225); tpMineButton.TextColor3 = Color3.fromRGB(255, 255, 255); tpMineButton.Font = Enum.Font.SourceSansBold; tpMineButton.TextSize = 16; tpMineButton.Text = "Телепорт: Шахта"; tpMineButton.LayoutOrder = 1; tpMineButton.Parent = teleportsContentFrame;
+    local tpUpgradeButton = Instance.new("TextButton"); tpUpgradeButton.Name = "TP_Upgrade"; tpUpgradeButton.Size = UDim2.new(0.9, 0, 0, 40); tpUpgradeButton.BackgroundColor3 = Color3.fromRGB(80, 200, 80); tpUpgradeButton.TextColor3 = Color3.fromRGB(255, 255, 255); tpUpgradeButton.Font = Enum.Font.SourceSansBold; tpUpgradeButton.TextSize = 16; tpUpgradeButton.Text = "Телепорт: Апгрейд"; tpUpgradeButton.LayoutOrder = 2; tpUpgradeButton.Parent = teleportsContentFrame;
+    local setWaypointButton = Instance.new("TextButton"); setWaypointButton.Name = "SetWaypoint"; setWaypointButton.Size = UDim2.new(0.9, 0, 0, 40); setWaypointButton.BackgroundColor3 = Color3.fromRGB(220, 120, 50); setWaypointButton.TextColor3 = Color3.fromRGB(255, 255, 255); setWaypointButton.Font = Enum.Font.SourceSansBold; setWaypointButton.TextSize = 16; setWaypointButton.Text = "Установить Вейпоинт (здесь)"; setWaypointButton.LayoutOrder = 3; setWaypointButton.Parent = teleportsContentFrame;
+    local goToWaypointButton = Instance.new("TextButton"); goToWaypointButton.Name = "GoToWaypoint"; goToWaypointButton.Size = UDim2.new(0.9, 0, 0, 40); goToWaypointButton.BackgroundColor3 = Color3.fromRGB(180, 80, 200); goToWaypointButton.TextColor3 = Color3.fromRGB(255, 255, 255); goToWaypointButton.Font = Enum.Font.SourceSansBold; goToWaypointButton.TextSize = 16; goToWaypointButton.Text = "Телепорт к Вейпоинту"; goToWaypointButton.LayoutOrder = 4; goToWaypointButton.Parent = teleportsContentFrame;
+    local tpBaseButton = Instance.new("TextButton"); tpBaseButton.Name = "TP_Base"; tpBaseButton.Size = UDim2.new(0.9, 0, 0, 40); tpBaseButton.BackgroundColor3 = Color3.fromRGB(100, 100, 220); tpBaseButton.TextColor3 = Color3.fromRGB(255, 255, 255); tpBaseButton.Font = Enum.Font.SourceSansBold; tpBaseButton.TextSize = 16; tpBaseButton.Text = "Телепорт: База"; tpBaseButton.LayoutOrder = 5; tpBaseButton.Parent = teleportsContentFrame;
+    local playerListSeparator = Instance.new("Frame"); playerListSeparator.Name = "PlayerListSeparator"; playerListSeparator.Size = UDim2.new(0.9, 0, 0, 2); playerListSeparator.BackgroundColor3 = Color3.fromRGB(80, 80, 80); playerListSeparator.BorderSizePixel = 0; playerListSeparator.LayoutOrder = 6; playerListSeparator.Parent = teleportsContentFrame;
+    local playerListTitle = Instance.new("TextLabel"); playerListTitle.Name = "PlayerListTitle"; playerListTitle.Size = UDim2.new(0.9, 0, 0, 25); playerListTitle.BackgroundTransparency = 1; playerListTitle.TextColor3 = Color3.fromRGB(220, 220, 220); playerListTitle.Font = Enum.Font.SourceSansBold; playerListTitle.TextSize = 15; playerListTitle.Text = "Телепорт к Игрокам:"; playerListTitle.TextXAlignment = Enum.TextXAlignment.Left; playerListTitle.LayoutOrder = 7; playerListTitle.Parent = teleportsContentFrame;
+    local playerListScrollingFrame = Instance.new("ScrollingFrame"); playerListScrollingFrame.Name = "PlayerListScroll"; playerListScrollingFrame.Size = UDim2.new(0.9, 0, 0.4, 0); playerListScrollingFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 55); playerListScrollingFrame.BorderSizePixel = 1; playerListScrollingFrame.BorderColor3 = Color3.fromRGB(80, 80, 80); playerListScrollingFrame.LayoutOrder = 8; playerListScrollingFrame.ScrollBarThickness = 5; playerListScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 0); playerListScrollingFrame.Parent = teleportsContentFrame; playerListFrameRef = playerListScrollingFrame;
+    local playerListInnerLayout = Instance.new("UIListLayout"); playerListInnerLayout.Padding = UDim.new(0, 5); playerListInnerLayout.SortOrder = Enum.SortOrder.LayoutOrder; playerListInnerLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; playerListInnerLayout.Parent = playerListScrollingFrame; playerListLayoutRef = playerListInnerLayout;
+    teleportsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() if teleportsContentFrame and teleportsLayout then teleportsContentFrame.CanvasSize = UDim2.new(0, 0, 0, teleportsLayout.AbsoluteContentSize.Y + teleportsLayout.Padding.Offset + 10) end end);
+
+    -- ================== Содержимое вкладки DigAura ==================
+    local digAuraLayout = Instance.new("UIListLayout"); digAuraLayout.Padding = UDim.new(0, 10); digAuraLayout.SortOrder = Enum.SortOrder.LayoutOrder; digAuraLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; digAuraLayout.Parent = digAuraContentFrame;
+
+    local digAuraToggleFrame = Instance.new("Frame"); digAuraToggleFrame.Name = "DigAuraToggleFrame"; digAuraToggleFrame.Size = UDim2.new(0.9, 0, 0, 40); digAuraToggleFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); digAuraToggleFrame.BorderSizePixel = 0; digAuraToggleFrame.LayoutOrder = 1; digAuraToggleFrame.Parent = digAuraContentFrame;
+    local digAuraCheckbox = Instance.new("TextButton"); digAuraCheckbox.Name = "DigAuraCheckbox"; digAuraCheckbox.Size = UDim2.new(0, 30, 0, 30); digAuraCheckbox.Position = UDim2.new(0, 10, 0.5, -15); digAuraCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); digAuraCheckbox.BorderSizePixel = 1; digAuraCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); digAuraCheckbox.Text = ""; digAuraCheckbox.Font = Enum.Font.SourceSansBold; digAuraCheckbox.TextSize = 20; digAuraCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); digAuraCheckbox.Parent = digAuraToggleFrame;
+    local digAuraToggleLabel = Instance.new("TextLabel"); digAuraToggleLabel.Size = UDim2.new(1, -50, 1, 0); digAuraToggleLabel.Position = UDim2.new(0, 45, 0, 0); digAuraToggleLabel.BackgroundTransparency = 1; digAuraToggleLabel.Font = Enum.Font.SourceSans; digAuraToggleLabel.TextSize = 16; digAuraToggleLabel.TextColor3 = Color3.fromRGB(220, 220, 220); digAuraToggleLabel.Text = "Включить Dig Aura"; digAuraToggleLabel.TextXAlignment = Enum.TextXAlignment.Left; digAuraToggleLabel.Parent = digAuraToggleFrame;
+
+    local digRadiusFrame = Instance.new("Frame"); digRadiusFrame.Name = "DigRadiusFrame"; digRadiusFrame.Size = UDim2.new(0.9, 0, 0, 50); digRadiusFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); digRadiusFrame.LayoutOrder = 2; digRadiusFrame.Parent = digAuraContentFrame;
+    local digRadiusLabel = Instance.new("TextLabel"); digRadiusLabel.Name = "DigRadiusLabel"; digRadiusLabel.Size = UDim2.new(1, -10, 0, 20); digRadiusLabel.Position = UDim2.new(0, 10, 0, 5); digRadiusLabel.BackgroundTransparency = 1; digRadiusLabel.Text = "Радиус Dig Aura: " .. ESPConfig.DigAuraRadius; digRadiusLabel.TextColor3 = Color3.fromRGB(255, 255, 255); digRadiusLabel.Font = Enum.Font.SourceSans; digRadiusLabel.TextSize = 16; digRadiusLabel.TextXAlignment = Enum.TextXAlignment.Left; digRadiusLabel.Parent = digRadiusFrame;
+    local digRadiusSlider = Instance.new("Frame"); digRadiusSlider.Name = "DigRadiusSlider"; digRadiusSlider.Size = UDim2.new(1, -30, 0, 6); digRadiusSlider.Position = UDim2.new(0, 15, 1, -15); digRadiusSlider.BackgroundColor3 = Color3.fromRGB(80, 80, 80); digRadiusSlider.Parent = digRadiusFrame;
+    local digRadiusKnob = Instance.new("TextButton"); digRadiusKnob.Name = "DigRadiusKnob"; digRadiusKnob.Size = UDim2.new(0, 16, 0, 16);
+    local minDigRadius, maxDigRadius = 5, 50
+    local digRadiusRange = maxDigRadius - minDigRadius
+    local currentDigRadiusRatio = math.clamp(((ESPConfig.DigAuraRadius or 15) - minDigRadius) / (digRadiusRange > 0 and digRadiusRange or 1), 0, 1)
+    digRadiusKnob.Position = UDim2.fromScale(currentDigRadiusRatio, 0.5) + UDim2.fromOffset(0, -8);
+    digRadiusKnob.BackgroundColor3 = Color3.fromRGB(200, 200, 200); digRadiusKnob.Text = ""; digRadiusKnob.Parent = digRadiusSlider; digRadiusKnob.AutoButtonColor = false; digRadiusKnob.ZIndex = 2;
+
+    local digOreSelectTitle = Instance.new("TextLabel"); digOreSelectTitle.Name = "DigOreSelectTitle"; digOreSelectTitle.Size = UDim2.new(0.9, 0, 0, 25); digOreSelectTitle.BackgroundTransparency = 1; digOreSelectTitle.TextColor3 = Color3.fromRGB(220, 220, 220); digOreSelectTitle.Font = Enum.Font.SourceSansBold; digOreSelectTitle.TextSize = 15; digOreSelectTitle.Text = "Выберите руды для ауры:"; digOreSelectTitle.TextXAlignment = Enum.TextXAlignment.Left; digOreSelectTitle.LayoutOrder = 3; digOreSelectTitle.Parent = digAuraContentFrame;
+
+    digAuraOreListFrame = Instance.new("ScrollingFrame"); digAuraOreListFrame.Name = "DigAuraOreListFrame"; digAuraOreListFrame.Size = UDim2.new(0.9, 0, 0.5, 0);
+    digAuraOreListFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45); digAuraOreListFrame.BorderSizePixel = 1; digAuraOreListFrame.BorderColor3 = Color3.fromRGB(60,60,60);
+    digAuraOreListFrame.ScrollBarThickness = 6; digAuraOreListFrame.CanvasSize = UDim2.new(0, 0, 0, 0); digAuraOreListFrame.LayoutOrder = 4; digAuraOreListFrame.Parent = digAuraContentFrame; digAuraOreListFrame.ScrollingDirection = Enum.ScrollingDirection.Y; digAuraOreListFrame.CanvasPosition = Vector2.zero;
+    digAuraOreListLayout = Instance.new("UIListLayout"); digAuraOreListLayout.Parent = digAuraOreListFrame; digAuraOreListLayout.Padding = UDim.new(0, 5); digAuraOreListLayout.SortOrder = Enum.SortOrder.Name; digAuraOreListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center;
+
+    digAuraLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        if digAuraContentFrame and digAuraLayout then
+            digAuraContentFrame.CanvasSize = UDim2.new(0, 0, 0, digAuraLayout.AbsoluteContentSize.Y + digAuraLayout.Padding.Offset + 10)
+        end
+    end)
+
+    -- ================== Содержимое вкладки Прочее (Etc) ==================
+    local etcLayout = Instance.new("UIListLayout"); etcLayout.Padding = UDim.new(0, 10); etcLayout.SortOrder = Enum.SortOrder.LayoutOrder; etcLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; etcLayout.Parent = etcContentFrame;
+    local xrayFrame = Instance.new("Frame"); xrayFrame.Size = UDim2.new(0.9, 0, 0, 40); xrayFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); xrayFrame.BorderSizePixel = 0; xrayFrame.LayoutOrder = 1; xrayFrame.Parent = etcContentFrame;
+    local xrayCheckbox = Instance.new("TextButton"); xrayCheckbox.Name = "XRayCheckbox"; xrayCheckbox.Size = UDim2.new(0, 30, 0, 30); xrayCheckbox.Position = UDim2.new(0, 10, 0.5, -15); xrayCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); xrayCheckbox.BorderSizePixel = 1; xrayCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); xrayCheckbox.Text = ""; xrayCheckbox.Font = Enum.Font.SourceSansBold; xrayCheckbox.TextSize = 20; xrayCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); xrayCheckbox.Parent = xrayFrame;
+    local xrayLabel = Instance.new("TextLabel"); xrayLabel.Size = UDim2.new(1, -50, 1, 0); xrayLabel.Position = UDim2.new(0, 45, 0, 0); xrayLabel.BackgroundTransparency = 1; xrayLabel.Font = Enum.Font.SourceSans; xrayLabel.TextSize = 16; xrayLabel.TextColor3 = Color3.fromRGB(220, 220, 220); xrayLabel.Text = "X-Ray Режим (Terrain)"; xrayLabel.TextXAlignment = Enum.TextXAlignment.Left; xrayLabel.Parent = xrayFrame;
+    local flyFrame = Instance.new("Frame"); flyFrame.Size = UDim2.new(0.9, 0, 0, 40); flyFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); flyFrame.BorderSizePixel = 0; flyFrame.LayoutOrder = 2; flyFrame.Parent = etcContentFrame;
+    local flyCheckbox = Instance.new("TextButton"); flyCheckbox.Name = "FlyCheckbox"; flyCheckbox.Size = UDim2.new(0, 30, 0, 30); flyCheckbox.Position = UDim2.new(0, 10, 0.5, -15); flyCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); flyCheckbox.BorderSizePixel = 1; flyCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); flyCheckbox.Text = ESPConfig.EnableFlyBind and "X" or ""; flyCheckbox.Font = Enum.Font.SourceSansBold; flyCheckbox.TextSize = 20; flyCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); flyCheckbox.Parent = flyFrame;
+    local flyLabel = Instance.new("TextLabel"); flyLabel.Size = UDim2.new(1, -50, 1, 0); flyLabel.Position = UDim2.new(0, 45, 0, 0); flyLabel.BackgroundTransparency = 1; flyLabel.Font = Enum.Font.SourceSans; flyLabel.TextSize = 16; flyLabel.TextColor3 = Color3.fromRGB(220, 220, 220); flyLabel.Text = "Зависание в воздухе (V)"; flyLabel.TextXAlignment = Enum.TextXAlignment.Left; flyLabel.Parent = flyFrame;
+    local infJumpFrame = Instance.new("Frame"); infJumpFrame.Size = UDim2.new(0.9, 0, 0, 40); infJumpFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); infJumpFrame.BorderSizePixel = 0; infJumpFrame.LayoutOrder = 3; infJumpFrame.Parent = etcContentFrame;
+    local infJumpCheckbox = Instance.new("TextButton"); infJumpCheckbox.Name = "InfJumpCheckbox"; infJumpCheckbox.Size = UDim2.new(0, 30, 0, 30); infJumpCheckbox.Position = UDim2.new(0, 10, 0.5, -15); infJumpCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); infJumpCheckbox.BorderSizePixel = 1; infJumpCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); infJumpCheckbox.Text = ESPConfig.EnableInfiniteJump and "X" or ""; infJumpCheckbox.Font = Enum.Font.SourceSansBold; infJumpCheckbox.TextSize = 20; infJumpCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); infJumpCheckbox.Parent = infJumpFrame;
+    local infJumpLabel = Instance.new("TextLabel"); infJumpLabel.Size = UDim2.new(1, -50, 1, 0); infJumpLabel.Position = UDim2.new(0, 45, 0, 0); infJumpLabel.BackgroundTransparency = 1; infJumpLabel.Font = Enum.Font.SourceSans; infJumpLabel.TextSize = 16; infJumpLabel.TextColor3 = Color3.fromRGB(220, 220, 220); infJumpLabel.Text = "Бесконечный прыжок"; infJumpLabel.TextXAlignment = Enum.TextXAlignment.Left; infJumpLabel.Parent = infJumpFrame;
+    local clickTpFrame = Instance.new("Frame"); clickTpFrame.Size = UDim2.new(0.9, 0, 0, 40); clickTpFrame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); clickTpFrame.BorderSizePixel = 0; clickTpFrame.LayoutOrder = 4; clickTpFrame.Parent = etcContentFrame;
+    local clickTpCheckbox = Instance.new("TextButton"); clickTpCheckbox.Name = "ClickTpCheckbox"; clickTpCheckbox.Size = UDim2.new(0, 30, 0, 30); clickTpCheckbox.Position = UDim2.new(0, 10, 0.5, -15); clickTpCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80); clickTpCheckbox.BorderSizePixel = 1; clickTpCheckbox.BorderColor3 = Color3.fromRGB(120, 120, 120); clickTpCheckbox.Text = ESPConfig.EnableClickTP and "X" or ""; clickTpCheckbox.Font = Enum.Font.SourceSansBold; clickTpCheckbox.TextSize = 20; clickTpCheckbox.TextColor3 = Color3.fromRGB(50, 200, 50); clickTpCheckbox.Parent = clickTpFrame;
+    local clickTpLabel = Instance.new("TextLabel"); clickTpLabel.Size = UDim2.new(1, -50, 1, 0); clickTpLabel.Position = UDim2.new(0, 45, 0, 0); clickTpLabel.BackgroundTransparency = 1; clickTpLabel.Font = Enum.Font.SourceSans; clickTpLabel.TextSize = 16; clickTpLabel.TextColor3 = Color3.fromRGB(220, 220, 220); clickTpLabel.Text = "Click TP (Л. Alt)"; clickTpLabel.TextXAlignment = Enum.TextXAlignment.Left; clickTpLabel.Parent = clickTpFrame;
+    local walkSpeedFrame = Instance.new("Frame"); walkSpeedFrame.Name = "WalkSpeedFrame"; walkSpeedFrame.Size = UDim2.new(0.9, 0, 0, 50); walkSpeedFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50); walkSpeedFrame.LayoutOrder = 5; walkSpeedFrame.Parent = etcContentFrame;
+    local walkSpeedLabel = Instance.new("TextLabel"); walkSpeedLabel.Name = "WalkSpeedLabel"; walkSpeedLabel.Size = UDim2.new(1, -10, 0, 20); walkSpeedLabel.Position = UDim2.new(0, 10, 0, 5); walkSpeedLabel.BackgroundTransparency = 1; walkSpeedLabel.Text = "WalkSpeed: " .. ESPConfig.WalkSpeed; walkSpeedLabel.TextColor3 = Color3.fromRGB(255, 255, 255); walkSpeedLabel.Font = Enum.Font.SourceSans; walkSpeedLabel.TextSize = 16; walkSpeedLabel.TextXAlignment = Enum.TextXAlignment.Left; walkSpeedLabel.Parent = walkSpeedFrame;
+    local walkSpeedSlider = Instance.new("Frame"); walkSpeedSlider.Name = "WalkSpeedSlider"; walkSpeedSlider.Size = UDim2.new(1, -30, 0, 6); walkSpeedSlider.Position = UDim2.new(0, 15, 1, -15); walkSpeedSlider.BackgroundColor3 = Color3.fromRGB(80, 80, 80); walkSpeedSlider.Parent = walkSpeedFrame;
+    local walkSpeedKnob = Instance.new("TextButton"); walkSpeedKnob.Name = "WalkSpeedKnob"; walkSpeedKnob.Size = UDim2.new(0, 16, 0, 16);
+    local minWalkSpeed, maxWalkSpeed = 16, 100
+    local walkSpeedRange = maxWalkSpeed - minWalkSpeed
+    local currentWalkSpeedRatio = math.clamp(((ESPConfig.WalkSpeed or 16) - minWalkSpeed) / (walkSpeedRange > 0 and walkSpeedRange or 1), 0, 1)
+    walkSpeedKnob.Position = UDim2.fromScale(currentWalkSpeedRatio, 0.5) + UDim2.fromOffset(0, -8);
+    walkSpeedKnob.BackgroundColor3 = Color3.fromRGB(200, 200, 200); walkSpeedKnob.Text = ""; walkSpeedKnob.Parent = walkSpeedSlider; walkSpeedKnob.AutoButtonColor = false; walkSpeedKnob.ZIndex = 2;
+    local unloadOreButton = Instance.new("TextButton"); unloadOreButton.Name = "UnloadOreButton"; unloadOreButton.Size = UDim2.new(0.9, 0, 0, 40); unloadOreButton.BackgroundColor3 = Color3.fromRGB(255, 165, 0); unloadOreButton.Text = "Выгрузить руду"; unloadOreButton.TextColor3 = Color3.fromRGB(255, 255, 255); unloadOreButton.Font = Enum.Font.SourceSansBold; unloadOreButton.TextSize = 16; unloadOreButton.LayoutOrder = 6; unloadOreButton.Parent = etcContentFrame;
+    local serverHopButton = Instance.new("TextButton"); serverHopButton.Name = "ServerHopButton"; serverHopButton.Size = UDim2.new(0.9, 0, 0, 40); serverHopButton.BackgroundColor3 = Color3.fromRGB(70, 130, 180); serverHopButton.Text = "Server Hop"; serverHopButton.TextColor3 = Color3.fromRGB(255, 255, 255); serverHopButton.Font = Enum.Font.SourceSansBold; serverHopButton.TextSize = 16; serverHopButton.LayoutOrder = 7; serverHopButton.Parent = etcContentFrame;
+    local unloadButton = Instance.new("TextButton"); unloadButton.Name = "UnloadButton"; unloadButton.Size = UDim2.new(0.9, 0, 0, 40); unloadButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50); unloadButton.Text = "ВЫГРУЗИТЬ СКРИПТ"; unloadButton.TextColor3 = Color3.fromRGB(255, 255, 255); unloadButton.Font = Enum.Font.SourceSansBold; unloadButton.TextSize = 16; unloadButton.LayoutOrder = 10; unloadButton.Parent = etcContentFrame;
+    etcLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() if etcContentFrame and etcLayout then etcContentFrame.CanvasSize = UDim2.new(0, 0, 0, etcLayout.AbsoluteContentSize.Y + etcLayout.Padding.Offset + 10) end end);
+
+    local toggleMenuButton = Instance.new("TextButton"); toggleMenuButton.Size = UDim2.new(0, 140, 0, 30); toggleMenuButton.Position = UDim2.new(0, 10, 0, 10); toggleMenuButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); toggleMenuButton.Text = "Меню Скрипта"; toggleMenuButton.TextColor3 = Color3.fromRGB(255, 255, 255); toggleMenuButton.Font = Enum.Font.SourceSansBold; toggleMenuButton.TextSize = 16; toggleMenuButton.ZIndex = 10; toggleMenuButton.Parent = gui;
+
+    local isUnloading = false;
+
+    local function createTypeToggleButton(name, enabled, configTable, colorTable, listParent) local displayName = translations[name] or name; local price = orePrices[name]; local displayLabelText = displayName; if price then displayLabelText = displayLabelText .. " [" .. price .. "$]" end; local frame = Instance.new("Frame"); frame.Name = displayName; frame.Size = UDim2.new(1, -10, 0, 30); frame.BackgroundColor3 = Color3.fromRGB(55, 55, 55); frame.Parent = listParent; frame.LayoutOrder = 1; local label = Instance.new("TextLabel"); label.Size = UDim2.new(0.7, -10, 1, 0); label.BackgroundTransparency = 1; label.Text = displayLabelText; label.TextColor3 = colorTable[name] or (configTable == ESPConfig.ShowGems and defaultGemColor or defaultOreColor); label.Font = Enum.Font.SourceSans; label.TextSize = 16; label.TextXAlignment = Enum.TextXAlignment.Left; label.Position = UDim2.new(0, 10, 0, 0); label.Parent = frame; local button = Instance.new("TextButton"); button.Name = name .. "_Toggle"; button.Size = UDim2.new(0, 60, 0, 22); button.Position = UDim2.new(1, -70, 0.5, -11); button.BackgroundColor3 = enabled and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0); button.Text = enabled and "ВКЛ" or "ВЫКЛ"; button.TextColor3 = Color3.fromRGB(255, 255, 255); button.Font = Enum.Font.SourceSansBold; button.TextSize = 12; button.Parent = frame; button.MouseButton1Click:Connect(function() if not isScriptRunning then return end; configTable[name] = not configTable[name]; button.BackgroundColor3 = configTable[name] and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0); button.Text = configTable[name] and "ВКЛ" or "ВЫКЛ"; updateESPVisibility() end); return frame; end;
+    local function populateList(configTable, colorTable, listParent) listParent.CanvasPosition = Vector2.zero; for _, child in ipairs(listParent:GetChildren()) do if child:IsA("Frame") then child:Destroy() end end; local sortedKeys = {}; for key, _ in pairs(configTable) do table.insert(sortedKeys, key) end; table.sort(sortedKeys); for _, name in ipairs(sortedKeys) do createTypeToggleButton(name, configTable[name] == true, configTable, colorTable, listParent) end; task_wait(); listParent.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + listLayout.Padding.Offset + 5); end;
+
+    local function createDigAuraOreToggleButton(oreName, listParent)
+        local displayName = translations[oreName] or oreName
+        local frame = Instance.new("Frame")
+        frame.Name = oreName .. "_DigAuraSelect"
+        frame.Size = UDim2.new(1, -10, 0, 30)
+        frame.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+        frame.Parent = listParent
+        frame.LayoutOrder = 1
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.7, -10, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = displayName
+        label.TextColor3 = oreColors[oreName] or defaultOreColor
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 16
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.Parent = frame
+
+        local button = Instance.new("TextButton")
+        button.Name = oreName .. "_DigAuraToggle"
+        button.Size = UDim2.new(0, 60, 0, 22)
+        button.Position = UDim2.new(1, -70, 0.5, -11)
+        local isSelected = ESPConfig.DigAuraTargetOres[oreName] == true
+        button.BackgroundColor3 = isSelected and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
+        button.Text = isSelected and "ВКЛ" or "ВЫКЛ"
+        button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        button.Font = Enum.Font.SourceSansBold
+        button.TextSize = 12
+        button.Parent = frame
+
+        button.MouseButton1Click:Connect(function()
+            if not isScriptRunning then return end
+            ESPConfig.DigAuraTargetOres[oreName] = not ESPConfig.DigAuraTargetOres[oreName]
+            isSelected = ESPConfig.DigAuraTargetOres[oreName]
+            button.BackgroundColor3 = isSelected and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
+            button.Text = isSelected and "ВКЛ" or "ВЫКЛ"
+            print("DigAura Target:", oreName, isSelected and "Enabled" or "Disabled")
+        end)
+        return frame
+    end
+
+    local function populateDigAuraOreList()
+        if not digAuraOreListFrame or not digAuraOreListLayout then return end
+        digAuraOreListFrame.CanvasPosition = Vector2.zero
+        for _, child in ipairs(digAuraOreListFrame:GetChildren()) do
+            if child:IsA("Frame") and child.Name:match("_DigAuraSelect$") then
                 child:Destroy()
             end
         end
-        
-        -- Получаем список всех игроков
-        local playerList = Players:GetPlayers()
-        local buttonHeight = 30
-        
-        -- Обновляем размер канваса
-        playerMenu.CanvasSize = UDim2.new(0, 0, 0, #playerList * buttonHeight)
-        
-        -- Создаем кнопки для каждого игрока
-        for i, player in ipairs(playerList) do
-            local playerButton = Instance.new("TextButton")
-            playerButton.Name = player.Name .. "Button"
-            playerButton.Size = UDim2.new(1, -10, 0, buttonHeight)
-            playerButton.Position = UDim2.new(0, 5, 0, (i-1) * buttonHeight)
-            playerButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-            playerButton.BackgroundTransparency = 0
-            playerButton.Text = player.Name
-            playerButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-            playerButton.Font = Enum.Font.Gotham
-            playerButton.TextSize = 14
-            playerButton.ZIndex = 6
-            playerButton.Parent = playerMenu
-            
-            -- Подсветка при наведении
-            playerButton.MouseEnter:Connect(function()
-                playerButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-            end)
-            
-            playerButton.MouseLeave:Connect(function()
-                playerButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-            end)
-            
-            -- Выбор игрока
-            playerButton.MouseButton1Click:Connect(function()
-                targetPlayerName = player.Name
-                playerDropdown.Text = player.Name
-                playerMenu.Visible = false
-            end)
-            
-            -- Добавляем скругление углов к кнопке игрока
-            local playerButtonCorner = Instance.new("UICorner")
-            playerButtonCorner.CornerRadius = UDim.new(0, 5)
-            playerButtonCorner.Parent = playerButton
+
+        local sortedOreKeys = {}
+        for key, _ in pairs(ESPConfig.ShowOres) do table.insert(sortedOreKeys, key) end
+        -- Раскомментируйте, если хотите добавить камни
+        -- for key, _ in pairs(ESPConfig.ShowGems) do table.insert(sortedOreKeys, key) end
+        table.sort(sortedOreKeys)
+
+        for _, oreName in ipairs(sortedOreKeys) do
+             if ESPConfig.DigAuraTargetOres[oreName] == nil then
+                 warn("Ore/Gem not found in DigAuraTargetOres during populate:", oreName)
+                 ESPConfig.DigAuraTargetOres[oreName] = false
+             end
+             createDigAuraOreToggleButton(oreName, digAuraOreListFrame)
         end
+
+        task.wait()
+        digAuraOreListFrame.CanvasSize = UDim2.new(0, 0, 0, digAuraOreListLayout.AbsoluteContentSize.Y + digAuraOreListLayout.Padding.Offset + 5)
     end
-    
-    -- Обработчик выпадающего списка игроков
-    playerDropdown.MouseButton1Click:Connect(function()
-        if not playerMenu.Visible then
-            UpdatePlayerList() -- Обновляем список при открытии
-        end
-        playerMenu.Visible = not playerMenu.Visible
-    end)
-    
-    -- Скрытие меню игроков при клике в другом месте
-    UserInputService.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and playerMenu.Visible then
-            local position = input.Position
-            local x = position.X
-            local y = position.Y
-            
-            local menuAbsPos = playerMenu.AbsolutePosition
-            local menuAbsSize = playerMenu.AbsoluteSize
-            local dropdownAbsPos = playerDropdown.AbsolutePosition
-            local dropdownAbsSize = playerDropdown.AbsoluteSize
-            
-            local inDropdown = x >= dropdownAbsPos.X and x <= dropdownAbsPos.X + dropdownAbsSize.X and
-                              y >= dropdownAbsPos.Y and y <= dropdownAbsPos.Y + dropdownAbsSize.Y
-            
-            local inMenu = x >= menuAbsPos.X and x <= menuAbsPos.X + menuAbsSize.X and
-                          y >= menuAbsPos.Y and y <= menuAbsPos.Y + menuAbsSize.Y
-            
-            if not (inMenu or inDropdown) then
-                playerMenu.Visible = false
+
+    local function switchTab(activeTabButton, activeContentFrame)
+        espTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); espTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); espContentFrame.Visible = false;
+        teleportsTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); teleportsTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); teleportsContentFrame.Visible = false;
+        digAuraTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); digAuraTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); digAuraContentFrame.Visible = false;
+        etcTabButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); etcTabButton.TextColor3 = Color3.fromRGB(200, 200, 200); etcContentFrame.Visible = false;
+
+        activeTabButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80); activeTabButton.TextColor3 = Color3.fromRGB(255, 255, 255); activeContentFrame.Visible = true;
+
+        if activeContentFrame:IsA("ScrollingFrame") then
+            task_wait();
+            local layout = activeContentFrame:FindFirstChildWhichIsA("UIListLayout")
+            if layout then
+                local contentSizeY = layout.AbsoluteContentSize.Y + layout.Padding.Offset + 10
+                 if activeContentFrame == digAuraContentFrame then
+                     contentSizeY = math.max(contentSizeY, 400)
+                 end
+                 activeContentFrame.CanvasSize = UDim2.new(0, 0, 0, contentSizeY)
             end
         end
-    end)
-    
-    -- Секция информации о текущем дроне
-    local droneInfoLabel = Instance.new("TextLabel")
-    droneInfoLabel.Name = "DroneInfoLabel"
-    droneInfoLabel.Size = UDim2.new(1, 0, 0, 20)
-    droneInfoLabel.Position = UDim2.new(0, 0, 0, 140)
-    droneInfoLabel.BackgroundTransparency = 1
-    droneInfoLabel.Text = "Статус дрона:"
-    droneInfoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    droneInfoLabel.Font = Enum.Font.Gotham
-    droneInfoLabel.TextSize = 14
-    droneInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    droneInfoLabel.Parent = contentFrame
-    
-    local droneStatusFrame = Instance.new("Frame")
-    droneStatusFrame.Name = "DroneStatusFrame"
-    droneStatusFrame.Size = UDim2.new(1, 0, 0, 30)
-    droneStatusFrame.Position = UDim2.new(0, 0, 0, 165)
-    droneStatusFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    droneStatusFrame.Parent = contentFrame
-    
-    local statusCorner = Instance.new("UICorner")
-    statusCorner.CornerRadius = UDim.new(0, 5)
-    statusCorner.Parent = droneStatusFrame
-    
-    local droneStatusText = Instance.new("TextLabel")
-    droneStatusText.Name = "DroneStatusText"
-    droneStatusText.Size = UDim2.new(1, -10, 1, 0)
-    droneStatusText.Position = UDim2.new(0, 5, 0, 0)
-    droneStatusText.BackgroundTransparency = 1
-    droneStatusText.Text = "Не создан"
-    droneStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    droneStatusText.Font = Enum.Font.Gotham
-    droneStatusText.TextSize = 14
-    droneStatusText.TextXAlignment = Enum.TextXAlignment.Left
-    droneStatusText.Parent = droneStatusFrame
-    
-    -- Секция кнопок управления
-    local buttonSpacing = 5
-    local buttonWidth = (contentFrame.Size.X.Offset - buttonSpacing) / 2
-    
-    -- Кнопка создания дрона
-    local createButton = Instance.new("TextButton")
-    createButton.Name = "CreateButton"
-    createButton.Size = UDim2.new(1, 0, 0, 35)
-    createButton.Position = UDim2.new(0, 0, 0, 210)
-    createButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-    createButton.Text = "Создать дрон"
-    createButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    createButton.Font = Enum.Font.GothamBold
-    createButton.TextSize = 14
-    createButton.Parent = contentFrame
-    
-    local createButtonCorner = Instance.new("UICorner")
-    createButtonCorner.CornerRadius = UDim.new(0, 5)
-    createButtonCorner.Parent = createButton
-    
-    -- Кнопка телепортации
-    local teleportButton = Instance.new("TextButton")
-    teleportButton.Name = "TeleportButton"
-    teleportButton.Size = UDim2.new(0.5, -buttonSpacing / 2, 0, 35)
-    teleportButton.Position = UDim2.new(0, 0, 0, 250)
-    teleportButton.BackgroundColor3 = Color3.fromRGB(60, 120, 60)
-    teleportButton.Text = "Телепорт"
-    teleportButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    teleportButton.Font = Enum.Font.GothamBold
-    teleportButton.TextSize = 14
-    teleportButton.Parent = contentFrame
-    
-    local teleportButtonCorner = Instance.new("UICorner")
-    teleportButtonCorner.CornerRadius = UDim.new(0, 5)
-    teleportButtonCorner.Parent = teleportButton
-    
-    -- Кнопка взрыва
-    local explodeButton = Instance.new("TextButton")
-    explodeButton.Name = "ExplodeButton"
-    explodeButton.Size = UDim2.new(0.5, -buttonSpacing / 2, 0, 35)
-    explodeButton.Position = UDim2.new(0.5, buttonSpacing / 2, 0, 250)
-    explodeButton.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
-    explodeButton.Text = "Взорвать"
-    explodeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    explodeButton.Font = Enum.Font.GothamBold
-    explodeButton.TextSize = 14
-    explodeButton.Parent = contentFrame
-    
-    local explodeButtonCorner = Instance.new("UICorner")
-    explodeButtonCorner.CornerRadius = UDim.new(0, 5)
-    explodeButtonCorner.Parent = explodeButton
-    
-    -- Обработчики кнопок
-    createButton.MouseButton1Click:Connect(function()
-        if CreateDrone() then
-            droneStatusText.Text = "Активен: " .. droneType
-            droneStatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
+
+        if activeContentFrame == teleportsContentFrame then
+            task.spawn(updatePlayerList)
+        elseif activeContentFrame == digAuraContentFrame then
+             task.spawn(populateDigAuraOreList)
         end
+    end;
+
+    espTabButton.MouseButton1Click:Connect(function() switchTab(espTabButton, espContentFrame) end);
+    teleportsTabButton.MouseButton1Click:Connect(function() switchTab(teleportsTabButton, teleportsContentFrame) end);
+    digAuraTabButton.MouseButton1Click:Connect(function() switchTab(digAuraTabButton, digAuraContentFrame) end);
+    etcTabButton.MouseButton1Click:Connect(function() switchTab(etcTabButton, etcContentFrame) end);
+
+    local function switchEspSubTab(activeSubTab) oreSubTab.BackgroundColor3 = Color3.fromRGB(55, 55, 55); oreSubTab.TextColor3 = Color3.fromRGB(200, 200, 200); gemSubTab.BackgroundColor3 = Color3.fromRGB(55, 55, 55); gemSubTab.TextColor3 = Color3.fromRGB(200, 200, 200); playerSubTab.BackgroundColor3 = Color3.fromRGB(55, 55, 55); playerSubTab.TextColor3 = Color3.fromRGB(200, 200, 200); oreGemFrame.Visible = false; playerFrame.Visible = false; activeSubTab.BackgroundColor3 = Color3.fromRGB(70, 70, 70); activeSubTab.TextColor3 = Color3.fromRGB(255, 255, 255); if activeSubTab == oreSubTab then oreGemFrame.Visible = true; populateList(ESPConfig.ShowOres, oreColors, listContentFrame) elseif activeSubTab == gemSubTab then oreGemFrame.Visible = true; populateList(ESPConfig.ShowGems, oreColors, listContentFrame) elseif activeSubTab == playerSubTab then playerFrame.Visible = true; end; end;
+    oreSubTab.MouseButton1Click:Connect(function() switchEspSubTab(oreSubTab) end);
+    gemSubTab.MouseButton1Click:Connect(function() switchEspSubTab(gemSubTab) end);
+    playerSubTab.MouseButton1Click:Connect(function() switchEspSubTab(playerSubTab) end);
+
+    globalToggleButton.MouseButton1Click:Connect(function() if not isScriptRunning then return end; ESPConfig.Enabled = not ESPConfig.Enabled; globalToggleButton.BackgroundColor3 = ESPConfig.Enabled and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0); globalToggleButton.Text = ESPConfig.Enabled and "ВКЛ" or "ВЫКЛ"; updateESPVisibility(); updateAllPlayerESPVisibility(); end);
+
+    local draggingOreDist = false;
+    distanceKnob.MouseButton1Down:Connect(function() draggingOreDist = true end);
+
+    playerToggleButton.MouseButton1Click:Connect(function() if not isScriptRunning then return end; ESPConfig.ShowPlayers = not ESPConfig.ShowPlayers; playerToggleButton.BackgroundColor3 = ESPConfig.ShowPlayers and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0); playerToggleButton.Text = ESPConfig.ShowPlayers and "ВКЛ" or "ВЫКЛ"; updateAllPlayerESPVisibility(); end);
+    local draggingPlayerDist = false;
+    playerDistanceKnob.MouseButton1Down:Connect(function() draggingPlayerDist = true end);
+
+    playerNameCheckbox.MouseButton1Click:Connect(function() if not isScriptRunning then return end; ESPConfig.ShowPlayerNames = not ESPConfig.ShowPlayerNames; playerNameCheckbox.Text = ESPConfig.ShowPlayerNames and "X" or ""; updateAllPlayerESPVisibility(); end);
+    playerDistCheckbox.MouseButton1Click:Connect(function() if not isScriptRunning then return end; ESPConfig.ShowPlayerDistance = not ESPConfig.ShowPlayerDistance; playerDistCheckbox.Text = ESPConfig.ShowPlayerDistance and "X" or ""; updateAllPlayerESPVisibility(); end);
+
+    tpMineButton.MouseButton1Click:Connect(function() if isScriptRunning then teleportPlayer(Vector3.new(-1856.12, 5.81, -193.13), true) end end);
+    tpUpgradeButton.MouseButton1Click:Connect(function() if isScriptRunning then teleportPlayer(Vector3.new(-1550.15, 10.92, 18.39), true) end end);
+    tpBaseButton.MouseButton1Click:Connect(function() if not isScriptRunning then return end; local targetLocation = getPlayerUnloaderLocation(); if not targetLocation then targetLocation = getPlayerPlotCenterLocation() end; if targetLocation then teleportPlayer(targetLocation, true); tpBaseButton.Text = "ТП: База (OK)"; task.delay(1.5, function() if tpBaseButton and tpBaseButton.Parent then tpBaseButton.Text = "Телепорт: База" end end); else warn("Не удалось найти локацию базы/Unloader'а!"); tpBaseButton.Text = "База НЕ Найдена!"; task.delay(1.5, function() if tpBaseButton and tpBaseButton.Parent then tpBaseButton.Text = "Телепорт: База" end end); end; end);
+    setWaypointButton.MouseButton1Click:Connect(function() if not isScriptRunning then return end; local playerChar = Players.LocalPlayer.Character; local hrp = playerChar and playerChar:FindFirstChild("HumanoidRootPart"); if hrp then savedWaypointPosition = hrp.Position; print("Вейпоинт установлен:", savedWaypointPosition); setWaypointButton.Text = "Вейпоинт УСТАНОВЛЕН!"; task.delay(1.5, function() if setWaypointButton and setWaypointButton.Parent then setWaypointButton.Text = "Установить Вейпоинт (здесь)" end end) else warn("Не удалось получить позицию персонажа.") end end);
+    goToWaypointButton.MouseButton1Click:Connect(function() if not isScriptRunning then return end; if savedWaypointPosition then teleportPlayer(savedWaypointPosition, false) else warn("Вейпоинт не установлен!"); goToWaypointButton.Text = "Вейпоинт НЕ ЗАДАН!"; task.delay(1.5, function() if goToWaypointButton and goToWaypointButton.Parent then goToWaypointButton.Text = "Телепорт к Вейпоинту" end end) end end);
+
+    local function updateXrayCheckboxVisual() if isXrayEnabled then xrayCheckbox.Text = "X"; xrayCheckbox.BackgroundColor3 = Color3.fromRGB(70, 150, 70) else xrayCheckbox.Text = ""; xrayCheckbox.BackgroundColor3 = Color3.fromRGB(80, 80, 80) end end;
+    xrayCheckbox.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end
+        isXrayEnabled = not isXrayEnabled
+        updateXrayCheckboxVisual()
+        if isXrayEnabled then task.spawn(applyXray) else task.spawn(revertXray) end
+        updateStatusIndicators()
     end)
-    
-    teleportButton.MouseButton1Click:Connect(function()
-        TeleportDroneToPlayer()
-    end)
-    
-    explodeButton.MouseButton1Click:Connect(function()
-        ExplodeDrone()
-        droneStatusText.Text = "Не создан"
-        droneStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
-    end)
-    
-    -- Эффекты при наведении на кнопки
-    local function ButtonHoverEffect(button, defaultColor, hoverColor)
-        button.MouseEnter:Connect(function()
-            button.BackgroundColor3 = hoverColor
-        end)
-        
-        button.MouseLeave:Connect(function()
-            button.BackgroundColor3 = defaultColor
-        end)
-    end
-    
-    ButtonHoverEffect(createButton, Color3.fromRGB(0, 120, 215), Color3.fromRGB(0, 140, 235))
-    ButtonHoverEffect(teleportButton, Color3.fromRGB(60, 120, 60), Color3.fromRGB(70, 140, 70))
-    ButtonHoverEffect(explodeButton, Color3.fromRGB(180, 60, 60), Color3.fromRGB(200, 70, 70))
-    
-    -- Обработчики кнопок управления GUI
-    closeButton.MouseButton1Click:Connect(function()
-        screenGui:Destroy()
-    end)
-    
-    local originalSize = mainFrame.Size
-    local minimizedSize = UDim2.new(0, 300, 0, 30)
-    
-    hideButton.MouseButton1Click:Connect(function()
-        isGuiOpen = not isGuiOpen
-        
-        if isGuiOpen then
-            hideButton.Text = "-"
-            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = originalSize}):Play()
-            task.wait(0.3)
-            contentFrame.Visible = true
+    updateXrayCheckboxVisual();
+
+    flyCheckbox.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end
+        ESPConfig.EnableFlyBind = not ESPConfig.EnableFlyBind
+        flyCheckbox.Text = ESPConfig.EnableFlyBind and "X" or ""
+        if not ESPConfig.EnableFlyBind then
+            toggleFly(false)
         else
-            hideButton.Text = "+"
-            contentFrame.Visible = false
-            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = minimizedSize}):Play()
+            updateStatusIndicators()
         end
     end)
-    
-    -- Проверка обновления статуса дрона
-    local function UpdateDroneStatus()
-        if RunService:IsStudio() then
-            return -- Не выполняем в Studio, чтобы избежать ошибок
-        end
-        
-        if spawnedDrone and spawnedDrone.Parent then
-            droneStatusText.Text = "Активен: " .. droneType
-            droneStatusText.TextColor3 = Color3.fromRGB(0, 255, 0)
-        else
-            droneStatusText.Text = "Не создан"
-            droneStatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
-        end
+
+    infJumpCheckbox.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end
+        ESPConfig.EnableInfiniteJump = not ESPConfig.EnableInfiniteJump
+        infJumpCheckbox.Text = ESPConfig.EnableInfiniteJump and "X" or ""
+        updateStatusIndicators()
+    end)
+
+    clickTpCheckbox.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end
+        ESPConfig.EnableClickTP = not ESPConfig.EnableClickTP
+        clickTpCheckbox.Text = ESPConfig.EnableClickTP and "X" or ""
+        if not ESPConfig.EnableClickTP then isClickTPActive = false; print("Click TP: Принудительно деактивирован") end;
+        updateStatusIndicators()
+    end)
+
+    local draggingWalkSpeed = false;
+    walkSpeedKnob.MouseButton1Down:Connect(function() draggingWalkSpeed = true end);
+
+    local function updateDigAuraCheckboxVisual()
+         digAuraCheckbox.Text = digAuraActive and "X" or ""
+         digAuraCheckbox.BackgroundColor3 = digAuraActive and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(80, 80, 80)
     end
-    
-    local statusUpdateConnection = RunService.Heartbeat:Connect(UpdateDroneStatus)
-    
-    -- Очистка при удалении GUI
-    screenGui.AncestryChanged:Connect(function(_, parent)
-        if parent == nil then
-            if statusUpdateConnection then
-                statusUpdateConnection:Disconnect()
-            end
-            if espConnection then
-                espConnection:Disconnect()
-            end
+    digAuraCheckbox.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end
+        if digAuraActive then
+            stopDigAura()
+        else
+            startDigAura()
+        end
+        updateDigAuraCheckboxVisual()
+    end)
+    updateDigAuraCheckboxVisual()
+
+    local draggingDigRadius = false;
+    digRadiusKnob.MouseButton1Down:Connect(function() draggingDigRadius = true end);
+
+    UserInputService.InputEnded:Connect(function(input)
+         if input.UserInputType == Enum.UserInputType.MouseButton1 then
+              draggingOreDist = false
+              draggingPlayerDist = false
+              draggingWalkSpeed = false
+              draggingDigRadius = false
+         end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingOreDist and input.UserInputType == Enum.UserInputType.MouseMovement then if not isScriptRunning then return end; local mousePos = UserInputService:GetMouseLocation(); local slider = distanceSlider; local knob = distanceKnob; local sliderStartPos = slider.AbsolutePosition.X; local sliderWidth = slider.AbsoluteSize.X - knob.AbsoluteSize.X; if sliderWidth <= 0 then sliderWidth = 1 end; local relativeX = math.clamp((mousePos.X - sliderStartPos - (knob.AbsoluteSize.X / 2)) / sliderWidth, 0, 1); knob.Position = UDim2.fromScale(relativeX, 0.5) + UDim2.fromOffset(0, -knob.AbsoluteSize.Y / 2); ESPConfig.MaxDistance = math.max(10, math.floor(relativeX * maxDistSliderValue + 0.5)); distanceLabel.Text = "Дистанция (Руды/Камни): " .. ESPConfig.MaxDistance; updateESPVisibility(); end
+        if draggingPlayerDist and input.UserInputType == Enum.UserInputType.MouseMovement then if not isScriptRunning then return end; local mousePos = UserInputService:GetMouseLocation(); local slider = playerDistanceSlider; local knob = playerDistanceKnob; local sliderStartPos = slider.AbsolutePosition.X; local sliderWidth = slider.AbsoluteSize.X - knob.AbsoluteSize.X; if sliderWidth <= 0 then sliderWidth = 1 end; local relativeX = math.clamp((mousePos.X - sliderStartPos - (knob.AbsoluteSize.X / 2)) / sliderWidth, 0, 1); knob.Position = UDim2.fromScale(relativeX, 0.5) + UDim2.fromOffset(0, -knob.AbsoluteSize.Y / 2); ESPConfig.PlayerMaxDistance = math.max(10, math.floor(relativeX * playerMaxDistSliderValue + 0.5)); playerDistanceLabel.Text = "Дистанция (Игроки): " .. ESPConfig.PlayerMaxDistance; updateAllPlayerESPVisibility(); end
+        if draggingWalkSpeed and input.UserInputType == Enum.UserInputType.MouseMovement then
+            if not isScriptRunning then return end
+            local mousePos = UserInputService:GetMouseLocation()
+            local slider = walkSpeedSlider; local knob = walkSpeedKnob
+            local sliderStartPos = slider.AbsolutePosition.X; local sliderWidth = slider.AbsoluteSize.X - knob.AbsoluteSize.X; if sliderWidth <= 0 then sliderWidth = 1 end
+            local relativeX = math.clamp((mousePos.X - sliderStartPos - (knob.AbsoluteSize.X / 2)) / sliderWidth, 0, 1)
+            knob.Position = UDim2.fromScale(relativeX, 0.5) + UDim2.fromOffset(0, -knob.AbsoluteSize.Y / 2)
+            local newSpeed = math.floor(minWalkSpeed + relativeX * (maxWalkSpeed - minWalkSpeed) + 0.5)
+            walkSpeedLabel.Text = "WalkSpeed: " .. newSpeed
+            setOrUpdateWalkSpeed(newSpeed)
+        end
+        if draggingDigRadius and input.UserInputType == Enum.UserInputType.MouseMovement then
+            if not isScriptRunning then return end
+            local mousePos = UserInputService:GetMouseLocation()
+            local slider = digRadiusSlider; local knob = digRadiusKnob
+            local sliderStartPos = slider.AbsolutePosition.X; local sliderWidth = slider.AbsoluteSize.X - knob.AbsoluteSize.X; if sliderWidth <= 0 then sliderWidth = 1 end
+            local relativeX = math.clamp((mousePos.X - sliderStartPos - (knob.AbsoluteSize.X / 2)) / sliderWidth, 0, 1)
+            knob.Position = UDim2.fromScale(relativeX, 0.5) + UDim2.fromOffset(0, -knob.AbsoluteSize.Y / 2)
+            local newRadius = math.floor(minDigRadius + relativeX * (maxDigRadius - minDigRadius) + 0.5)
+            ESPConfig.DigAuraRadius = newRadius
+            digRadiusLabel.Text = "Радиус Dig Aura: " .. newRadius
         end
     end)
-    
-    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    return screenGui
+
+    unloadOreButton.MouseButton1Click:Connect(function() if not isScriptRunning or isUnloading then return end; isUnloading = true; local originalText = unloadOreButton.Text; unloadOreButton.Text = "Выгрузка..."; unloadOreButton.AutoButtonColor = false; task.spawn(function() local success = executeUnloadSequence_Unload(); task_wait(0.5); if unloadOreButton and unloadOreButton.Parent then unloadOreButton.Text = originalText; unloadOreButton.AutoButtonColor = true; end; isUnloading = false; end); end);
+
+    serverHopButton.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end
+        local originalText = serverHopButton.Text
+        serverHopButton.Text = "Переход..."
+        serverHopButton.AutoButtonColor = false
+        print("Попытка смены сервера...")
+        local success, err = pcall(function()
+            TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+        end)
+        if not success then
+            warn("Ошибка при смене сервера:", err)
+            serverHopButton.Text = "Ошибка!"
+            task.wait(2)
+            if serverHopButton and serverHopButton.Parent then
+                 serverHopButton.Text = originalText
+                 serverHopButton.AutoButtonColor = true
+            end
+        else
+             print("Команда телепортации отправлена.")
+        end
+    end)
+
+    unloadButton.MouseButton1Click:Connect(function()
+        if not isScriptRunning then return end;
+        isScriptRunning = false;
+        print("Начало выгрузки скрипта...");
+        stopDigAura()
+
+        if isXrayEnabled then task.spawn(revertXray); isXrayEnabled = false; task_wait(0.2) end;
+        disconnectAllListeners();
+        removeAllESP();
+        for userId, esp in pairs(playerEspInstances) do if esp then esp:Destroy() end end;
+        playerEspInstances = {};
+
+        if statusIndicatorGui and statusIndicatorGui.Parent then statusIndicatorGui:Destroy() end;
+        statusIndicatorGui = nil; statusFrame = nil; xrayStatusLabel = nil; flyStatusLabel = nil; jumpStatusLabel = nil; clickTpStatusLabel = nil; walkSpeedStatusLabel = nil; digAuraStatusLabel = nil;
+
+        if gui and gui.Parent then gui:Destroy() end;
+        oreColors, ESPConfig, translations, orePrices, savedWaypointPosition, originalTerrainLocalTransparency, espMenu, playerListFrameRef, playerListLayoutRef = nil, nil, nil, nil, nil, nil, nil, nil, nil;
+        remoteEventMine = nil; digAuraContentFrame = nil; digAuraOreListFrame = nil; digAuraOreListLayout = nil; digAuraTabButton = nil;
+        print("Скрипт выгружен успешно.");
+    end);
+
+    toggleMenuButton.MouseButton1Click:Connect(function() if mainFrame then mainFrame.Visible = not mainFrame.Visible end end);
+
+    switchEspSubTab(oreSubTab);
+    gui.Parent = playerGui;
+    print("Меню ESP v2.12 NC создано (с DigAura).");
+    return gui;
 end
 
--- Запуск скрипта при активации
-local gui = CreateGUI()
-CreateNotification("✅ Панель управления дроном активирована", 3)
+local espMenu = nil
+local initSuccess, initError = pcall(function()
+    if isScriptRunning then
+        playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+        createStatusIndicators()
 
--- Добавляем обработчик клавиши для вызова/скрытия GUI
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if not gameProcessed and input.KeyCode == Enum.KeyCode.F4 then
-        if LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI") then
-            LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI"):Destroy()
-        else
-            CreateGUI()
-            CreateNotification("✅ Панель управления дроном активирована", 3)
+        print("Инициализация ESPConfig.DigAuraTargetOres...")
+        for oreName, _ in pairs(ESPConfig.ShowOres) do
+            if ESPConfig.DigAuraTargetOres[oreName] == nil then ESPConfig.DigAuraTargetOres[oreName] = false end
         end
-    end
-    
-    -- Сохраняем функцию взрыва на клавишу V для обратной совместимости
-    if not gameProcessed and input.KeyCode == Enum.KeyCode.V then
-        ExplodeDrone()
+        -- Раскомментируйте, если нужны камни
+        --[[
+        for gemName, _ in pairs(ESPConfig.ShowGems) do
+            if ESPConfig.DigAuraTargetOres[gemName] == nil then ESPConfig.DigAuraTargetOres[gemName] = false end
+        end
+        --]]
+        print("DigAuraTargetOres инициализирована.")
+
+        setupESPAndListeners();
+        espMenu = createESPMenu();
+        if not espMenu then error("Не удалось создать меню GUI") end;
+        startPlayerListUpdater();
+        startPlayerESPUpdater();
+        setupExtraFeaturesListeners();
+        updateStatusIndicators()
     end
 end)
 
-Цель промта:
-У меня есть такой скрипт для роблокс 1. Исправь меню (объекты друг на друге) 2. Убери в меню определитель дрона 3. Скрипт почемуто определяет не правильно дрон есп и какой дрон телепортировать. У меня есп отображается на чужой дрон который уже давно летает и пытается его телепортировать, а мне нужно телепортировать дрон который заспавнил именно я. 4. Сделай автообновления списка игроков каждые 3 сек 5. Не скидывай части кода которые изменять не надо
-
-Недописанный скрипт с изменениями:
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Network = ReplicatedStorage:WaitForChild("Network")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-
-local LocalPlayer = Players.LocalPlayer
-
--- Базовые настройки
-local droneType = "OG-7V"
-local targetPlayerName = "SleepyClerk"
-local spawnedDrone = nil
-local espConnection = nil
-local isGuiOpen = true
-
--- Функция для создания ESP
-local function CreateESP(object, text, color)
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ESP"
-    billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 200, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 5, 0)
-    billboard.Adornee = object.PrimaryPart or object:FindFirstChildWhichIsA("BasePart")
-    
-    local textLabel = Instance.new("TextLabel")
-    textLabel.BackgroundTransparency = 1
-    textLabel.Size = UDim2.new(1, 0, 1, 0)
-    textLabel.Text = text or "Дрон"
-    textLabel.TextColor3 = color or Color3.fromRGB(255, 0, 0)
-    textLabel.TextScaled = true
-    textLabel.Font = Enum.Font.GothamBold
-    textLabel.Parent = billboard
-    
-    -- Создаём обводку вокруг объекта
-    local highlight = Instance.new("Highlight")
-    highlight.FillColor = color or Color3.fromRGB(255, 0, 0)
-    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    highlight.FillTransparency = 0.5
-    highlight.OutlineTransparency = 0
-    highlight.Adornee = object
-    highlight.Parent = object
-    
-    billboard.Parent = object
-    
-    return billboard
+if not initSuccess then
+    warn("Критическая ошибка при инициализации скрипта:", initError);
+    isScriptRunning = false;
+    pcall(stopDigAura)
+    pcall(disconnectAllListeners);
+    pcall(removeAllESP);
+    for userId, esp in pairs(playerEspInstances or {}) do if esp then pcall(function() esp:Destroy() end) end end;
+    playerEspInstances = {};
+    if isXrayEnabled then pcall(revertXray) end;
+    if espMenu and espMenu.Parent then pcall(function() espMenu:Destroy() end) end;
+    if statusIndicatorGui and statusIndicatorGui.Parent then pcall(function() statusIndicatorGui:Destroy() end) end;
+    if digAuraContentFrame and digAuraContentFrame.Parent then pcall(function() digAuraContentFrame:Destroy() end) end;
+    local player = Players.LocalPlayer
+    local character = player and player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then pcall(function() humanoid.WalkSpeed = defaultWalkSpeed end) end
 end
 
--- Создаем уведомление
-local function CreateNotification(text, duration)
-    duration = duration or 3
-    
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "Notification"
-    screenGui.ResetOnSpawn = false
-    
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 300, 0, 50)
-    frame.Position = UDim2.new(0.5, -150, 0.8, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    frame.BackgroundTransparency = 0.2
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
-    
-    local cornerRadius = Instance.new("UICorner")
-    cornerRadius.CornerRadius = UDim.new(0, 10)
-    cornerRadius.Parent = frame
-    
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Size = UDim2.new(1, -20, 1, 0)
-    textLabel.Position = UDim2.new(0, 10, 0, 0)
-    textLabel.BackgroundTransparency = 1
-    textLabel.Text = text
-    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    textLabel.Font = Enum.Font.GothamBold
-    textLabel.TextSize = 18
-    textLabel.TextWrapped = true
-    textLabel.Parent = frame
-    
-    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    
-    -- Анимация появления
-    frame.Position = UDim2.new(0.5, -150, 1.1, 0)
-    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-    game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 0.8, 0)}):Play()
-    
-    -- Автоматическое удаление
-    task.spawn(function()
-        task.wait(duration)
-        tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-        local tween = game:GetService("TweenService"):Create(frame, tweenInfo, {Position = UDim2.new(0.5, -150, 1.1, 0)})
-        tween.Completed:Connect(function()
-            screenGui:Destroy()
-        end)
-        tween:Play()
-    end)
-    
-    return screenGui
+if not isScriptRunning then
+    warn("Инициализация скрипта не удалась или скрипт был выгружен.")
 end
-
--- Функция для создания дрона
-local function CreateDrone()
-    if spawnedDrone and spawnedDrone.Parent then
-        CreateNotification("⚠️ Дрон уже существует! Сначала удалите текущий.", 3)
-        return
-    end
-    
-    print("Создаём дрон типа: " .. droneType)
-    local creationSuccess = Network:WaitForChild("CreateDrone"):InvokeServer(droneType)
-    print("Результат создания дрона:", creationSuccess)
-    
-    -- Пауза для появления дрона в игровом мире
-    task.wait(2)
-    
-    -- Сохраняем ссылку на созданный дрон
-    local droneFolder = workspace:FindFirstChild("Drones")
-    if droneFolder then
-        local drones = droneFolder:GetChildren()
-        if #drones > 0 then
-            -- Важное исправление: берем последний созданный дрон и проверяем его владельца
-            for i = #drones, 1, -1 do
-                local potentialDrone = drones[i]
-                -- Проверяем, принадлежит ли этот дрон локальному игроку
-                local isDroneOwnedByLocalPlayer = false
-                
-                -- Проверка на tag или другой атрибут владельца
-                if potentialDrone:FindFirstChild("Owner") and potentialDrone.Owner.Value == LocalPlayer then
-                    isDroneOwnedByLocalPlayer = true
-                end
-                
-                -- Если владельца нет, проверяем, создан ли этот дрон недавно
-                if not isDroneOwnedByLocalPlayer then
-                    -- Проверяем время создания (если доступно)
-                    if potentialDrone:GetAttribute("CreationTime") then
-                        local creationTime = potentialDrone:GetAttribute("CreationTime")
-                        if tick() - creationTime < 10 then -- Если создан менее 10 секунд назад
-                            isDroneOwnedByLocalPlayer = true
-                        end
-                    else
-                        -- Если нет атрибута времени создания, предполагаем, что последний созданный - наш
-                        if i == #drones then
-                            isDroneOwnedByLocalPlayer = true
-                        end
-                    end
-                end
-                
-                if isDroneOwnedByLocalPlayer then
-                    spawnedDrone = potentialDrone
-                    break
-                end
-            end
-        end
-    end
-    
-    if not spawnedDrone then
-        warn("❌ Дрон не был найден в игровом мире")
-        CreateNotification("❌ Дрон не был найден в игровом мире", 3)
-        return false
-    end
-    
-    -- Маркируем наш дрон для последующей идентификации
-    spawnedDrone:SetAttribute("OwnedByLocalScript", true)
-    spawnedDrone:SetAttribute("CreationTime", tick())
-    
-    -- Добавляем ESP на дрон
-    local espTag = CreateESP(spawnedDrone, "ДРОН | " .. droneType, Color3.fromRGB(0, 255, 0))
-    print("✅ ESP добавлен на дрон")
-    
-    -- Убедимся, что у дрона есть PrimaryPart для телепортации
-    local primaryPart = spawnedDrone.PrimaryPart
-    if not primaryPart then
-        -- Если PrimaryPart не установлен, найдём любую часть для установки
-        for _, part in pairs(spawnedDrone:GetDescendants()) do
-            if part:IsA("BasePart") then
-                spawnedDrone.PrimaryPart = part
-                primaryPart = part
-                print("✅ Установлен PrimaryPart для дрона:", part.Name)
-                break
-            end
-        end
-    end
-    
-    if not primaryPart then
-        warn("❌ Не удалось найти часть для установки PrimaryPart на дроне.")
-        CreateNotification("❌ Не удалось найти PrimaryPart для дрона", 3)
-        return false
-    end
-    
-    -- Функция для постоянного обновления положения ESP
-    local function UpdateESP()
-        if espTag and espTag.Parent and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and primaryPart then
-            local distance = (LocalPlayer.Character.HumanoidRootPart.Position - primaryPart.Position).Magnitude
-            espTag.TextLabel.Text = string.format("ДРОН | %s\n%.1f м", droneType, distance)
-        end
-    end
-    
-    -- Обновление ESP каждый кадр
-    if espConnection then
-        espConnection:Disconnect()
-    end
-    espConnection = RunService.RenderStepped:Connect(UpdateESP)
-    
-    -- Очистка при удалении дрона
-    spawnedDrone.AncestryChanged:Connect(function(_, parent)
-        if parent == nil then
-            if espConnection then
-                espConnection:Disconnect()
-                espConnection = nil
-            end
-            spawnedDrone = nil
-            print("❌ Дрон был удалён")
-            CreateNotification("❌ Дрон был удалён", 3)
-        end
-    end)
-    
-    -- Для отладки сохраняем дрон в глобальную переменную
-    _G.lastSpawnedDrone = spawnedDrone
-    print("Дрон сохранён в _G.lastSpawnedDrone для отладки")
-    
-    CreateNotification("✅ Дрон создан! Используйте интерфейс для управления.", 3)
-    return true
-end
-
--- Функция для телепортации дрона к игроку
-local function TeleportDroneToPlayer()
-    if not (spawnedDrone and spawnedDrone.Parent) then
-        CreateNotification("❌ Сначала создайте дрон!", 3)
-        return
-    end
-    
-    -- Получаем целевого игрока
-    local targetPlayer = Players:FindFirstChild(targetPlayerName)
-    if not (targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")) then
-        warn("❌ Не удалось найти игрока или его позицию.")
-        CreateNotification("❌ Игрок не найден: " .. targetPlayerName, 3)
-        return
-    end
-    
-    -- Проверяем, что мы телепортируем именно наш дрон
-    if not spawnedDrone:GetAttribute("OwnedByLocalScript") then
-        CreateNotification("❌ Этот дрон не принадлежит вам", 3)
-        return
-    }
-    
-    -- Определяем первичную часть дрона
-    local primaryPart = spawnedDrone.PrimaryPart
-    if not primaryPart then
-        for _, part in pairs(spawnedDrone:GetDescendants()) do
-            if part:IsA("BasePart") then
-                spawnedDrone.PrimaryPart = part
-                primaryPart = part
-                break
-            end
-        end
-    end
-    
-    if not primaryPart then
-        CreateNotification("❌ Не найден PrimaryPart дрона", 3)
-        return
-    end
-    
-    -- Телепортация дрона к игроку
-    local targetPos = targetPlayer.Character.HumanoidRootPart.Position + Vector3.new(0, 5, 0)
-    print("Телепортируем дрон к игроку:", targetPlayerName, "на позицию:", tostring(targetPos))
-    
-    -- Пробуем все возможные методы телепортации
-    print("Метод 1: SetPrimaryPartCFrame")
-    pcall(function()
-        spawnedDrone:SetPrimaryPartCFrame(CFrame.new(targetPos))
-    end)
-    
-    print("Метод 2: Перемещение через свойство CFrame")
-    pcall(function()
-        for _, part in pairs(spawnedDrone:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CFrame = CFrame.new(targetPos)
-            end
-        end
-    end)
-    
-    print("Метод 3: Сетевые события")
-    -- Пытаемся найти и использовать событие для управления дроном
-    local possibleEvents = {
-        "MoveDrone", 
-        "TeleportDrone", 
-        "SetDronePosition", 
-        "UpdateDronePosition",
-        "Drive"
-    }
-    
-    for _, eventName in ipairs(possibleEvents) do
-        local event = Network:FindFirstChild(eventName)
-        if event then
-            print("Пробуем событие:", eventName)
-            pcall(function()
-                if event:IsA("RemoteEvent") then
-                    event:FireServer(spawnedDrone, CFrame.new(targetPos))
-                elseif event:IsA("RemoteFunction") then
-                    event:InvokeServer(spawnedDrone, CFrame.new(targetPos))
-                end
-            end)
-        end
-    end
-    
-    CreateNotification("✅ Дрон телепортирован к " .. targetPlayerName, 3)
-    print("✅ Все методы телепортации испробованы")
-end
-
--- Функция для взрыва дрона
-local function ExplodeDrone()
-    if not (spawnedDrone and spawnedDrone.Parent) then
-        CreateNotification("❌ Сначала создайте дрон!", 3)
-        return
-    end
-    
-    -- Проверяем, что мы взрываем именно наш дрон
-    if not spawnedDrone:GetAttribute("OwnedByLocalScript") then
-        CreateNotification("❌ Этот дрон не принадлежит вам", 3)
-        return
-    }
-    
-    local explodeEvent = Network:FindFirstChild("ExplodeDrone")
-    if explodeEvent then
-        print("💥 Активируем взрыв дрона")
-        
-        -- Создаем визуальный эффект до взрыва
-        local primaryPart = spawnedDrone.PrimaryPart
-        if primaryPart then
-            -- Создаем эффект мигания перед взрывом
-            for i = 1, 3 do
-                if not spawnedDrone or not spawnedDrone.Parent then
-                    break
-                end
-                
-                for _, part in pairs(spawnedDrone:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.Color = Color3.fromRGB(255, 0, 0)
-                    end
-                end
-                task.wait(0.1)
-                
-                if not spawnedDrone or not spawnedDrone.Parent then
-                    break
-                end
-                
-                for _, part in pairs(spawnedDrone:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.Color = Color3.fromRGB(255, 255, 0)
-                    end
-                end
-                task.wait(0.1)
-            end
-        end
-        
-        -- Запускаем взрыв
-        local success, errorMsg = pcall(function()
-            explodeEvent:FireServer(spawnedDrone)
-        end)
-        
-        if success then
-            CreateNotification("💥 Дрон взорван!", 3)
-            if espConnection then
-                espConnection:Disconnect()
-                espConnection = nil
-            end
-            spawnedDrone = nil
-        else
-            warn("❌ Ошибка при взрыве дрона:", errorMsg)
-            CreateNotification("❌ Ошибка при взрыве дрона", 3)
-        end
-    else
-        -- Пробуем альтернативные имена событий
-        local alternativeEvents = {"DetonateDrone", "DestoryDrone", "DestroyDrone"}
-        local eventFound = false
-        
-        for _, eventName in ipairs(alternativeEvents) do
-            local event = Network:FindFirstChild(eventName)
-            if event then
-                eventFound = true
-                local success, errorMsg = pcall(function()
-                    event:FireServer(spawnedDrone)
-                end)
-                
-                if success then
-                    CreateNotification("💥 Дрон взорван!", 3)
-                    if espConnection then
-                        espConnection:Disconnect()
-                        espConnection = nil
-                    end
-                    spawnedDrone = nil
-                    break
-                end
-            end
-        end
-        
-        if not eventFound then
-            warn("❌ Событие взрыва не найдено")
-            CreateNotification("❌ Событие взрыва не найдено", 3)
-        end
-    end
-end
-
--- Создание GUI
-local function CreateGUI()
-    -- Удаляем старый GUI если он существует
-    if LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI") then
-        LocalPlayer.PlayerGui:FindFirstChild("DroneControlGUI"):Destroy()
-    end
-    
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "DroneControlGUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    
-    -- Основная панель
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 300, 0, 320)
-    mainFrame.Position = UDim2.new(0.02, 0, 0.3, 0)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Active = true
-    mainFrame.Draggable = true
-    mainFrame.Parent = screenGui
-    
-    -- Добавляем скругление углов
-    local cornerRadius = Instance.new("UICorner")
-    cornerRadius.CornerRadius = UDim.new(0, 8)
-    cornerRadius.Parent = mainFrame
-    
-    -- Заголовок
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 30)
-    titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
-    
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 8)
-    titleCorner.Parent = titleBar
-    
-    local bottomFrame = Instance.new("Frame")
-    bottomFrame.Name = "BottomFrame"
-    bottomFrame.Size = UDim2.new(1, 0, 0, 15)
-    bottomFrame.Position = UDim2.new(0, 0, 0.5, 0)
-    bottomFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    bottomFrame.BorderSizePixel = 0
-    bottomFrame.Parent = titleBar
-    
-    local titleText = Instance.new("TextLabel")
-    titleText.Name = "TitleText"
-    titleText.Size = UDim2.new(1, -60, 1, 0)
-    titleText.Position = UDim2.new(0, 10, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.Text = "Управление дроном"
-    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextSize = 14
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Parent = titleBar
-    
-    -- Кнопка закрытия
-    local closeButton = Instance.new("TextButton")
-    closeButton.Name = "CloseButton"
-    closeButton.Size = UDim2.new(0, 24, 0, 24)
-    closeButton.Position = UDim2.new(1, -27, 0, 3)
-    closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-    closeButton.Text = "X"
-    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.TextSize = 14
-    closeButton.Parent = titleBar
-    
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 12)
-    closeCorner.Parent = closeButton
-    
-    -- Кнопка скрытия
-    local hideButton = Instance.new("TextButton")
-    hideButton.Name = "HideButton"
-    hideButton.Size = UDim2.new(0, 24, 0, 24)
-    hideButton.Position = UDim2.new(1, -55, 0, 3)
-    hideButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    hideButton.Text = "-"
-    hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    hideButton.Font = Enum.Font.GothamBold
-    hideButton.TextSize = 14
-    hideButton.Parent = titleBar
-    
-    local hideCorner = Instance.new("UICorner")
-    hideCorner.CornerRadius = UDim.new(0, 12)
-    hideCorner.Parent = hideButton
-    
-    -- Контейнер для содержимого
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "ContentFrame"
-    contentFrame.Size = UDim2.new(1, -20, 1, -40)
-    contentFrame.Position = UDim2.new(0, 10, 0, 35)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.Parent = mainFrame
-    
-    -- Секция выбора типа дрона (поз. исправлена)
-    local droneTypeLabel = Instance.new("TextLabel")
-    droneTypeLabel.Name = "DroneTypeLabel"
-    droneTypeLabel.Size = UDim2.new(1, 0, 0, 20)
-    droneTypeLabel.Position = UDim2.new(0, 0, 0, 0)
-    droneTypeLabel.BackgroundTransparency = 1
-    droneTypeLabel.Text = "Тип дрона:"
-    droneTypeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    droneTypeLabel.Font = Enum.Font.Gotham
-    droneTypeLabel.TextSize = 14
-    droneTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    droneTypeLabel.Parent = contentFrame
-    
-    local droneTypeDropdown = Instance.new("TextButton")
-    droneTypeDropdown.Name = "DroneTypeDropdown"
-    droneTypeDropdown.Size = UDim2.new(1, 0, 0, 30)
-    droneTypeDropdown.Position = UDim2.new(0, 0, 0, 25)
-    droneTypeDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    droneTypeDropdown.Text = droneType
-    droneTypeDropdown.TextColor3 = Color3.fromRGB(255, 255, 255)
-    droneTypeDropdown.Font = Enum.Font.Gotham
-    droneTypeDropdown.TextSize = 14
-    droneTypeDropdown.Parent = contentFrame
-    
-    local dropdownCorner = Instance.new("UICorner")
-    dropdownCorner.CornerRadius = UDim.new(0, 5)
-    dropdownCorner.Parent = droneTypeDropdown
-    
-    local dropdownArrow = Instance.new("TextLabel")
-    dropdownArrow.Name = "DropdownArrow"
-    dropdownArrow.Size = UDim2.new(0, 20, 0, 20)
-    dropdownArrow.Position = UDim2.new(1, -25, 0, 5)
-    dropdownArrow.BackgroundTransparency = 1
-    dropdownArrow.Text = "▼"
-    dropdownArrow.TextColor3 = Color3.fromRGB(200, 200, 200)
-    dropdownArrow.Font = Enum.Font.Gotham
-    dropdownArrow.TextSize = 14
-    dropdownArrow.Parent = droneTypeDropdown
-    
-    local droneTypeMenu = Instance.new("Frame")
-    droneTypeMenu.Name = "DroneTypeMenu"
-    droneTypeMenu.Size = UDim2.new(1, 0, 0, 120)
-    droneTypeMenu.Position = UDim2.new(0, 0, 0, 60)
-    droneTypeMenu.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    droneTypeMenu.BorderSizePixel = 0
-    droneTypeMenu.Visible = false
-    droneTypeMenu.ZIndex = 5
-    droneTypeMenu.Parent = contentFrame
-    
-    local menuCorner = Instance.new("UICorner")
-    menuCorner.CornerRadius = UDim.new(0, 5)
-    menuCorner.Parent = droneTypeMenu
-    
-    -- Список доступных типов дронов
-    local droneTypes = {"OG-7V", "PNV-20", "Orlan-10", "RQ-4B", "TB-2"}
-    local buttonHeight = 30
-    
-    for i, dType in ipairs(droneTypes) do
-        local typeButton = Instance.new("TextButton")
-        typeButton.Name = dType .. "Button"
-        typeButton.Size = UDim2.new(1, 0, 0, buttonHeight)
-        typeButton.Position = UDim2.new(0, 0, 0, (i-1) * buttonHeight)
-        typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        typeButton.BackgroundTransparency = 0
-        typeButton.Text = dType
-        typeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        typeButton.Font = Enum.Font.Gotham
-        typeButton.TextSize = 14
-        typeButton.ZIndex = 6
-        typeButton.Parent = droneTypeMenu
-        
-        -- Подсветка при наведении
-        typeButton.MouseEnter:Connect(function()
-            typeButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        end)
-        
-        typeButton.MouseLeave:Connect(function()
-            typeButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        end)
-        
-        -- Выбор типа дрона
-        typeButton.MouseButton1Click:Connect(function()
-            droneType = dType
-            droneTypeDropdown.Text = dType
-            droneTypeMenu.Visible = false
-        end)
-    end
-    
-    -- Обработчик выпадающего списка
-    droneTypeDropdown.MouseButton1Click:Connect(function()
-        droneTypeMenu.Visible = not droneTypeMenu.Visible
-    end)
-    
-    -- Скрытие меню при клике в другом месте
-    UserInputService.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local position = input.Position
-            local x = position.X
-            local y = position.Y
-            
-            local menuAbsPos = droneTypeMenu.AbsolutePosition
-            local menuAbsSize = droneTypeMenu.AbsoluteSize
-            local dropdownAbsPos = droneTypeDropdown.AbsolutePosition
-            local dropdownAbsSize = droneTypeDropdown.AbsoluteSize
-            
-            local inDropdown = x >= dropdownAbsPos.X and x <= dropdownAbsPos.X + dropdownAbsSize.X and
-                              y >= dropdownAbsPos.Y and y <= dropdownAbsPos.Y + dropdownAbsSize.Y
-            
-            local inMenu = x >= menuAbsPos.X and x <= menuAbsPos.X + menuAbsSize.X and
-                          y >= menuAbsPos.Y and y <= menuAbsPos.Y + menuAbsSize.Y
-            
-            if droneTypeMenu.Visible and not (inMenu or inDropdown) then
-                droneTypeMenu.Visible = false
-            end
-        end
-    end)
-    
-    -- Секция выбора игрока (поз. исправлена)
-    local playerLabel = Instance.new("TextLabel")
-    playerLabel.Name = "PlayerLabel"
-    playerLabel.Size = UDim2.new(1, 0, 0, 20)
-    playerLabel.Position = UDim2.new(0, 0, 0, 70)
-    playerLabel.BackgroundTransparency = 1
-    playerLabel.Text = "Выбор игрока:"
-    playerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    playerLabel.Font = Enum.Font.Gotham
-    playerLabel.TextSize = 14
-    playerLabel.TextXAlignment = Enum.TextXAlignment.Left
-    playerLabel.Parent = contentFrame
-    
-    local playerDropdown = Instance.new("TextButton")
-    playerDropdown.Name = "PlayerDropdown"
-    playerDropdown.Size = UDim2.new(1, 0, 0, 30)
-    playerDropdown.Position = UDim2.new(0, 0, 0, 95)
-    playerDropdown.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    playerDropdown
