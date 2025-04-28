@@ -6,7 +6,7 @@ local ESPConfig = {
     Enabled = true, MaxDistance = 170,
     ShowOres = { Tin = true, Cobalt = true, Iron = true, Gold = true, Silver = true, Aluminium = true, Lead = true, Palladium = true, Plutonium = true, Titanium = true, Topaz = true, Tungsten = true, Vanadium = true, Rhodium = true, Uranium = true },
     ShowGems = { Emerald = true, Sapphire = true, Ruby = true, Diamond = true, Amethyst = true, Poudretteite = true },
-    ShowPlayers = true, PlayerMaxDistance = 1000, ShowPlayerNames = true, ShowPlayerDistance = true,
+    ShowPlayers = true, PlayerMaxDistance = 1500, ShowPlayerNames = true, ShowPlayerDistance = true,
     EnableFlyBind = false, EnableInfiniteJump = false,
     EnableClickTP = false,
     WalkSpeed = 16,
